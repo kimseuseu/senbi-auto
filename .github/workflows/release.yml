@@ -1,0 +1,44 @@
+name: Release
+
+# v로 시작하는 태그를 밀면 맥(dmg/zip)·윈도우(exe) 빌드 후
+# GitHub Releases 에 올린다. 설치된 앱들은 이 릴리스를 보고 자동 업데이트한다.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac
+          - os: windows-latest
+            name: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 엔진 번들
+        run: npm run build:engine
+
+      - name: 빌드 & 릴리스 업로드
+        run: npx electron-builder --${{ matrix.name }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 맥 코드 서명 없음 → 서명 단계 건너뜀
+          CSC_IDENTITY_AUTO_DISCOVERY: false

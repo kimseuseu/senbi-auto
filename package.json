@@ -1,0 +1,113 @@
+{
+  "name": "senbi-auto",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "네이버 블로그 자동 포스팅·발행·이웃관리 데스크톱 앱 (senbiPost 생성 파이프라인 기반)",
+  "productName": "senbiPOST",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "app": "electron .",
+    "app:build": "npm run build:engine && electron-builder",
+    "release": "npm run build:engine && electron-builder --publish always",
+    "build:engine": "tsx scripts/build-engine.ts",
+    "make-icons": "tsx scripts/make-icons.ts",
+    "typecheck": "tsc --noEmit",
+    "crawl": "tsx src/scripts/crawl-test.ts",
+    "gen": "tsx src/scripts/gen-test.ts",
+    "login": "tsx src/scripts/login.ts",
+    "setup:browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@fastify/static": "^8.0.4",
+    "dotenv": "^16.4.7",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
+    "fastify": "^5.2.1",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.50.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/node-cron": "^3.0.11",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "build": {
+    "appId": "com.senbi.auto",
+    "productName": "senbiPOST",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "src/server/public/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "kimseuseu",
+        "repo": "senbi-auto",
+        "releaseType": "release"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "senbiPOST-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "senbiPOST-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "senbiPOST",
+      "installerLanguages": [
+        "ko-KR"
+      ],
+      "language": "1042"
+    },
+    "asar": false
+  },
+  "optionalDependencies": {
+    "@img/sharp-libvips-win32-x64": "^1.3.2",
+    "@img/sharp-win32-x64": "^0.35.3"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+.env
+.env.local
+*.log
+
+# 로컬 데이터(세션·이미지 캐시 등)를 프로젝트 안에 둘 경우
+data/
+.senbi-auto/
+
+# macOS
+.DS_Store
