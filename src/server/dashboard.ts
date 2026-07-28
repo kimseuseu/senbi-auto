@@ -24,6 +24,7 @@ import {
 } from "../core/accounts";
 import { startLogin, loginStatus, isLoginInProgress } from "../naver/login";
 import { hasSavedSession } from "../naver/session";
+import { browserStatus } from "../naver/browserSetup";
 import { getSessionState } from "../naver/sessionState";
 import { todayCount, recentPublished } from "../core/activity";
 import { createLogger, getLogsSince } from "../core/logger";
@@ -86,6 +87,7 @@ export async function startDashboard(port: number): Promise<void> {
       },
       published: recentPublished(10),
       alerts: unreadAlerts().slice(0, 5),
+      browser: browserStatus(),
     };
   });
 

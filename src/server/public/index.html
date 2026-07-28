@@ -147,6 +147,16 @@
     color:#ffd9d9;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.3);
     transition:background .15s,border-color .15s}
   .alertbar button:hover{background:rgba(255,107,107,.2);border-color:rgba(255,107,107,.5)}
+  .setupbar{position:sticky;top:57px;z-index:19;display:none;gap:12px;align-items:flex-start;
+    padding:13px 26px;border-bottom:1px solid var(--line);
+    background:rgba(255,255,255,.03);backdrop-filter:blur(14px)}
+  .setupbar.show{display:flex;animation:alertIn .22s cubic-bezier(.2,.7,.3,1)}
+  .setupbar .body{flex:1;min-width:0}
+  .setupbar .msg{font-size:13.5px;font-weight:600}
+  .setupbar .why{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .setupbar .spin{width:13px;height:13px;border-radius:99px;margin-top:3px;flex:none;
+    border:2px solid var(--line2);border-top-color:var(--text);animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);
     background:rgba(20,20,23,.92);color:#fff;border:1px solid var(--line2);backdrop-filter:blur(12px);
     padding:12px 20px;border-radius:99px;font-size:14px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;max-width:90vw;z-index:50}
@@ -240,6 +250,14 @@
   <span style="flex:1"></span>
   <span class="muted" id="apiState">API 키 확인 중</span>
 </header>
+
+<div class="setupbar" id="setupBar" role="status" aria-live="polite">
+  <span class="spin"></span>
+  <div class="body">
+    <div class="msg">자동화용 브라우저를 준비하는 중입니다</div>
+    <div class="why" id="setupWhy">최초 1회만 내려받습니다. 끝나면 바로 작업할 수 있습니다.</div>
+  </div>
+</div>
 
 <div class="alertbar" id="alertBar" role="alert" aria-live="assertive">
   <span class="dot"></span>
@@ -577,6 +595,15 @@ async function loadStatus(){
   if("hasApiKey" in s){ $("mApi").textContent = s.hasApiKey ? "API 연결됨" : "API 키 없음"; }
   setWorking(!!s.running, !!s.stopRequested);
   renderAlerts(s.alerts||[]);
+  renderSetup(s.browser);
+}
+
+// 자동화용 브라우저 준비 상태 (설치본 최초 실행 시 1회)
+function renderSetup(b){
+  const bar=$("setupBar");
+  if(!b || b.state!=="installing"){ bar.classList.remove("show"); return; }
+  $("setupWhy").textContent=(b.progress||"내려받는 중…")+" · 최초 1회만 받습니다.";
+  bar.classList.add("show");
 }
 
 // ---------- 작업 오류 알림 ----------

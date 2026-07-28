@@ -2,6 +2,7 @@ import "dotenv/config";
 import { ensureAppDirs } from "./config/paths";
 import { rescheduleAll, stopScheduler } from "./scheduler";
 import { startDashboard } from "./server/dashboard";
+import { prefetchChromium } from "./naver/browserSetup";
 import { createLogger } from "./core/logger";
 
 const log = createLogger("main");
@@ -15,6 +16,7 @@ async function main() {
   await startDashboard(port);
 
   log.info(`준비 완료 — 브라우저에서 http://localhost:${port} 열기`);
+  prefetchChromium(); // 자동화용 브라우저가 없으면 백그라운드로 미리 받아 둔다
 }
 
 function shutdown() {

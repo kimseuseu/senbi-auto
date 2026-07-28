@@ -3,6 +3,7 @@ import path from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { SESSION_DIR, ensureDir, dataPath } from "../config/paths";
 import { createLogger } from "../core/logger";
+import { ensureChromium } from "./browserSetup";
 
 const log = createLogger("session");
 
@@ -90,6 +91,8 @@ export interface LaunchOptions {
 export async function launchContext(
   opts: LaunchOptions = {},
 ): Promise<BrowserContext> {
+  // 설치본에는 Chromium 이 없으므로 필요한 순간에 자동으로 받는다 (있으면 즉시 통과)
+  await ensureChromium();
   const sessionDir = sessionDirFor(opts.accountId);
   ensureDir(sessionDir);
   clearBrowserLocks(opts.accountId); // 이전 비정상 종료가 남긴 잠금 제거 → 즉시 닫힘 방지
