@@ -18,6 +18,7 @@
     "build:engine": "tsx scripts/build-engine.ts",
     "make-icons": "tsx scripts/make-icons.ts",
     "typecheck": "tsc --noEmit",
+    "verify:keywords": "tsx src/scripts/verify-keyword-rules.ts",
     "crawl": "tsx src/scripts/crawl-test.ts",
     "gen": "tsx src/scripts/gen-test.ts",
     "login": "tsx src/scripts/login.ts",
