@@ -1,9 +1,10 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { getSettings } from "./config/settings";
-import { runPostJob } from "./run/postJob";
-import { runNeighborJob } from "./run/neighborJob";
+import { runPostJob, type PostJobResult } from "./run/postJob";
+import { runNeighborJob, type NeighborJobResult } from "./run/neighborJob";
 import { listAccounts, resolveAccountSettings, type Account } from "./core/accounts";
 import { resetStop, requestStop, shouldStop } from "./core/cancel";
+import { alertJobFailure } from "./core/alerts";
 import { createLogger } from "./core/logger";
 
 export { requestStop, shouldStop };
@@ -24,9 +25,23 @@ async function withLock(name: string, fn: () => Promise<void>): Promise<void> {
   running = true;
   try {
     await fn();
+  } catch (err) {
+    // 예약 실행 중 터진 예외는 여기서 잡지 않으면 조용히 사라진다 → 반드시 알림으로 남긴다
+    log.error(`${name}: 예기치 못한 오류로 중지`, err);
+    alertJobFailure(name.startsWith("neighbor") ? "neighbor" : "post", err);
   } finally {
     running = false;
   }
+}
+
+/** 글 발행 결과에서 문제를 찾아 알림으로 남긴다 (실패 + 발행까지 못 간 경우 모두) */
+function notePostResult(r: PostJobResult, target?: string): void {
+  if (!r.ok) alertJobFailure("post", r.error ?? "알 수 없는 오류", { target });
+  else if (r.error) alertJobFailure("post", r.error, { target, stopped: false });
+}
+
+function noteNeighborResult(r: NeighborJobResult, target?: string): void {
+  if (!r.ok) alertJobFailure("neighbor", r.error ?? "알 수 없는 오류", { target });
 }
 
 export function rescheduleAll(): void {
@@ -50,6 +65,7 @@ export function rescheduleAll(): void {
             const runs = Math.max(1, s.postsPerRun);
             for (let i = 0; i < runs; i++) {
               const r = await runPostJob();
+              notePostResult(r);
               log.info(`글 #${i + 1}: ${r.ok ? (r.published ? `발행 ${r.url ?? ""}` : "초안 저장") : `실패 ${r.error}`}`);
             }
           } else {
@@ -76,6 +92,7 @@ export function rescheduleAll(): void {
           const accounts = listAccounts().filter((a) => a.neighbor.enabled);
           if (accounts.length === 0) {
             const r = await runNeighborJob();
+            noteNeighborResult(r);
             log.info(`이웃: ${r.ok ? `공감 ${r.likes} 댓글 ${r.comments} 서로이웃 ${r.buddyRequests}` : `실패 ${r.error}`}`);
           } else {
             for (const acc of accounts) {
@@ -84,6 +101,7 @@ export function rescheduleAll(): void {
                 settings: resolveAccountSettings(acc),
                 accountId: acc.id,
               });
+              noteNeighborResult(r, acc.name);
               log.info(
                 `이웃(${acc.name}): ${r.ok ? `공감 ${r.likes} 댓글 ${r.comments} 서로이웃 ${r.buddyRequests}` : `실패 ${r.error}`}`,
               );
@@ -125,6 +143,7 @@ export async function runPostNow(headless = true): Promise<string> {
         ? { headless, settings: resolveAccountSettings(acc), accountId: acc.id }
         : { headless },
     );
+    notePostResult(r);
     out = r.ok
       ? r.published
         ? `발행 완료: ${r.url ?? "(URL 미확인)"}`
@@ -152,6 +171,7 @@ async function runAccount(acc: Account, headless: boolean, results: string[]): P
   for (let i = 0; i < runs; i++) {
     if (shouldStop()) return;
     const r = await runPostJob({ headless, settings, accountId: acc.id });
+    notePostResult(r, acc.name);
     results.push(
       `${acc.name} 글${i + 1} ${r.ok ? (r.published ? "발행" : "초안") : `실패(${r.error})`}`,
     );
@@ -165,6 +185,7 @@ async function runAccount(acc: Account, headless: boolean, results: string[]): P
 
   if (acc.neighbor.enabled && !shouldStop()) {
     const n = await runNeighborJob({ headless, settings, accountId: acc.id });
+    noteNeighborResult(n, acc.name);
     results.push(
       n.ok ? `${acc.name} 이웃 공감${n.likes}·댓글${n.comments}` : `${acc.name} 이웃실패(${n.error})`,
     );
@@ -207,10 +228,12 @@ export async function runAllNow(
       for (let i = 0; i < runs; i++) {
         if (shouldStop()) break;
         const r = await runPostJob({ headless });
+        notePostResult(r);
         results.push(r.ok ? (r.published ? `발행 ${i + 1}` : `초안 ${i + 1}`) : `실패(${r.error})`);
       }
       if (s.neighbor.enabled && !shouldStop()) {
         const n = await runNeighborJob({ headless });
+        noteNeighborResult(n);
         results.push(n.ok ? `이웃 공감 ${n.likes}·댓글 ${n.comments}` : `이웃실패(${n.error})`);
       }
     }
@@ -232,6 +255,7 @@ export async function runNeighborNow(headless = true): Promise<string> {
         ? { headless, settings: resolveAccountSettings(acc), accountId: acc.id }
         : { headless },
     );
+    noteNeighborResult(r);
     out = r.ok
       ? `공감 ${r.likes} · 댓글 ${r.comments} · 서로이웃 ${r.buddyRequests}`
       : `실패: ${r.error}`;

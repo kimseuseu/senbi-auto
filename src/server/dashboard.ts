@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { getSettings, saveSettings, resolveApiKey, type Settings } from "../config/settings";
 import { rescheduleAll, runPostNow, runNeighborNow, runAllNow, isRunning, requestStop, shouldStop } from "../scheduler";
 import { listDrafts, getDraft } from "../core/drafts";
+import { listAlerts, unreadAlerts, markAlertsRead, clearAlerts } from "../core/alerts";
 import {
   listTemplateSummaries,
   learnBlog,
@@ -84,7 +85,24 @@ export async function startDashboard(port: number): Promise<void> {
         buddyRequests: s.neighbor.dailyBuddyRequestLimit,
       },
       published: recentPublished(10),
+      alerts: unreadAlerts().slice(0, 5),
     };
+  });
+
+  // ---------- 오류 알림 ----------
+  app.get<{ Querystring: { unread?: string } }>("/api/alerts", async (req) => {
+    const only = req.query?.unread === "1";
+    return { alerts: only ? unreadAlerts() : listAlerts(50) };
+  });
+
+  app.post<{ Body: { id?: string } }>("/api/alerts/read", async (req) => {
+    const n = markAlertsRead(req.body?.id);
+    return { read: n };
+  });
+
+  app.post("/api/alerts/clear", async () => {
+    clearAlerts();
+    return { ok: true };
   });
 
   // ---------- 템플릿(학습한 블로그) ----------

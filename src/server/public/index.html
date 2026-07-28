@@ -7,7 +7,7 @@
 <style>
   :root{
     --bg:#000000; --panel:#0c0c0e; --panel2:#141417; --line:rgba(255,255,255,.09);
-    --line2:rgba(255,255,255,.16); --text:#f4f4f5; --muted:#8a8a91; --ok:#39d98a; --warn:#ffb454;
+    --line2:rgba(255,255,255,.16); --text:#f4f4f5; --muted:#8a8a91; --ok:#39d98a; --warn:#ffb454; --danger:#ff6b6b;
     --radius:16px;
   }
   *{box-sizing:border-box}
@@ -129,6 +129,24 @@
   .stat{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
   .stat:last-child{border:0}.stat b{font-variant-numeric:tabular-nums}
   .muted{color:var(--muted);font-size:13px}
+  /* 작업 오류 배너 — 헤더 바로 아래, 확인 전까지 남는다 */
+  .alertbar{position:sticky;top:57px;z-index:19;display:none;gap:12px;align-items:flex-start;
+    padding:13px 26px;border-bottom:1px solid rgba(255,107,107,.28);
+    background:linear-gradient(180deg,rgba(255,107,107,.13),rgba(255,107,107,.06));
+    backdrop-filter:blur(14px)}
+  .alertbar.show{display:flex;animation:alertIn .22s cubic-bezier(.2,.7,.3,1)}
+  @keyframes alertIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .alertbar .dot{width:7px;height:7px;border-radius:99px;background:var(--danger);
+    margin-top:6px;flex:none;box-shadow:0 0 0 4px rgba(255,107,107,.16)}
+  .alertbar .body{flex:1;min-width:0}
+  .alertbar .msg{font-size:13.5px;font-weight:600;color:#ffd9d9}
+  .alertbar .why{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5;
+    overflow-wrap:anywhere}
+  .alertbar .when{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .alertbar button{flex:none;font-size:12px;padding:6px 13px;border-radius:99px;cursor:pointer;
+    color:#ffd9d9;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.3);
+    transition:background .15s,border-color .15s}
+  .alertbar button:hover{background:rgba(255,107,107,.2);border-color:rgba(255,107,107,.5)}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);
     background:rgba(20,20,23,.92);color:#fff;border:1px solid var(--line2);backdrop-filter:blur(12px);
     padding:12px 20px;border-radius:99px;font-size:14px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;max-width:90vw;z-index:50}
@@ -222,6 +240,16 @@
   <span style="flex:1"></span>
   <span class="muted" id="apiState">API 키 확인 중</span>
 </header>
+
+<div class="alertbar" id="alertBar" role="alert" aria-live="assertive">
+  <span class="dot"></span>
+  <div class="body">
+    <div class="msg" id="alertMsg"></div>
+    <div class="why" id="alertWhy"></div>
+    <div class="when" id="alertWhen"></div>
+  </div>
+  <button id="alertAck" type="button">확인</button>
+</div>
 
 <main>
   <!-- 메인: 원버튼 -->
@@ -548,7 +576,27 @@ async function loadStatus(){
   $("mPublished").textContent=(s.published?.length||0);
   if("hasApiKey" in s){ $("mApi").textContent = s.hasApiKey ? "API 연결됨" : "API 키 없음"; }
   setWorking(!!s.running, !!s.stopRequested);
+  renderAlerts(s.alerts||[]);
 }
+
+// ---------- 작업 오류 알림 ----------
+let _alertShown="";
+function renderAlerts(list){
+  const bar=$("alertBar");
+  if(!list.length){ bar.classList.remove("show"); _alertShown=""; return; }
+  const a=list[0];
+  const more=list.length>1?` (외 ${list.length-1}건)`:"";
+  $("alertMsg").textContent=a.message+more;
+  $("alertWhy").textContent=a.detail||"";
+  $("alertWhen").textContent=new Date(a.at).toLocaleString("ko-KR");
+  bar.classList.add("show");
+  if(a.id!==_alertShown){ _alertShown=a.id; }
+}
+$("alertAck").onclick=async()=>{
+  $("alertBar").classList.remove("show"); _alertShown="";
+  await fetch("/api/alerts/read",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  loadStatus();
+};
 
 let _working=false;
 function setWorking(on,stopping){

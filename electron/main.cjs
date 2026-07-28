@@ -3,6 +3,7 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const updater = require("./updater.cjs");
+const alerts = require("./alerts.cjs");
 
 const PORT = Number(process.env.SENBI_AUTO_PORT || 3060);
 const APP_ROOT = path.dirname(__dirname); // senbi-auto/
@@ -177,6 +178,8 @@ if (!gotLock) {
     try {
       await waitForServer();
       createWindow();
+      // 엔진이 뜬 뒤부터 작업 오류 알림을 감시
+      alerts.start(PORT, showWindow);
     } catch (err) {
       dialog.showErrorBox("senbi-auto", "엔진 서버를 시작하지 못했습니다.\n" + String(err));
     }
@@ -186,6 +189,7 @@ if (!gotLock) {
 
   app.on("before-quit", () => {
     quitting = true;
+    alerts.stop();
     if (engine && !engine.killed) engine.kill();
   });
 
