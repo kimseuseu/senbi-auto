@@ -1,6 +1,6 @@
 {
   "name": "senbi-auto",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "네이버 블로그 자동 포스팅·발행·이웃관리 데스크톱 앱 (senbiPost 생성 파이프라인 기반)",
