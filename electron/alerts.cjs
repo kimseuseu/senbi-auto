@@ -48,12 +48,12 @@ function notify(alert, onClick) {
 }
 
 /**
- * @param {number} port 엔진 포트
+ * @param {() => number} getPort 엔진 포트 (충돌 시 바뀔 수 있어 매번 읽는다)
  * @param {() => void} onClick 알림 클릭 시 (대시보드 열기)
  */
-function start(port, onClick) {
+function start(getPort, onClick) {
   const tick = async () => {
-    const alerts = await fetchUnread(port);
+    const alerts = await fetchUnread(getPort());
     const ids = new Set(alerts.map((a) => a.id));
     if (!primed) {
       // 앱을 켠 시점에 이미 있던 알림은 배너로만 보여 주고 팝업은 띄우지 않는다

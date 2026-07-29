@@ -109,25 +109,50 @@ function runInstall(): Promise<boolean> {
   });
 }
 
+/** PC에 이미 깔려 있는 브라우저 후보 — 윈도우엔 Edge 가 항상 있다 */
+const CHANNELS = process.platform === "win32" ? ["msedge", "chrome"] : ["chrome", "msedge"];
+
+/** 설치된 브라우저 중 실제로 실행되는 채널을 찾는다 */
+async function findInstalledChannel(): Promise<string | null> {
+  for (const channel of CHANNELS) {
+    try {
+      const b = await chromium.launch({ channel, headless: true });
+      await b.close();
+      return channel;
+    } catch {
+      /* 다음 후보 */
+    }
+  }
+  return null;
+}
+
 /**
- * 브라우저가 준비될 때까지 보장한다. 이미 있으면 즉시 반환.
- * 동시에 여러 작업이 불러도 실제 설치는 한 번만 돈다.
+ * 브라우저를 쓸 수 있는 상태로 만든다.
+ * @returns null 이면 전용 Chromium 사용, 문자열이면 그 채널(Edge/Chrome)로 대체 실행
  */
-export async function ensureChromium(): Promise<void> {
+export async function ensureBrowserAvailable(): Promise<string | null> {
   if (isInstalled()) {
     state = "ready";
-    return;
+    return null;
   }
   if (!inflight) inflight = runInstall().finally(() => (inflight = null));
-  const ok = await inflight;
-  if (ok) return;
+  if (await inflight) return null;
+
+  // 다운로드 실패 → PC에 있는 브라우저로 대체
+  const channel = await findInstalledChannel();
+  if (channel) {
+    state = "ready";
+    progress = "";
+    log.warn(`전용 Chromium 을 받지 못해 설치된 ${channel} 로 진행합니다`);
+    return channel;
+  }
 
   addAlert({
     kind: "post",
     message: "자동화용 브라우저를 준비하지 못해 작업을 시작할 수 없습니다",
-    detail: `${lastError} — 인터넷에 연결한 뒤 앱을 다시 시작하면 자동으로 다시 받습니다.`,
+    detail: `${lastError} — 인터넷 연결이나 회사 방화벽(cdn.playwright.dev)을 확인해 주세요. Chrome 이나 Edge 가 설치돼 있으면 그것으로 대신 실행합니다.`,
   });
-  throw new Error(`자동화용 브라우저(Chromium)를 준비하지 못했습니다. ${lastError}`);
+  throw new Error(`자동화용 브라우저를 준비하지 못했습니다. ${lastError}`);
 }
 
 /** 엔진 시작 시 백그라운드로 미리 받아 둔다 (실패해도 데몬은 계속 뜬다) */
@@ -137,5 +162,5 @@ export function prefetchChromium(): void {
     return;
   }
   log.info("자동화용 브라우저가 없어 미리 내려받습니다");
-  void ensureChromium().catch((err) => log.warn("브라우저 사전 준비 실패", err));
+  void ensureBrowserAvailable().catch((err) => log.warn("브라우저 사전 준비 실패", err));
 }

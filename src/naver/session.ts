@@ -3,7 +3,7 @@ import path from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { SESSION_DIR, ensureDir, dataPath } from "../config/paths";
 import { createLogger } from "../core/logger";
-import { ensureChromium } from "./browserSetup";
+import { ensureBrowserAvailable } from "./browserSetup";
 
 const log = createLogger("session");
 
@@ -55,7 +55,8 @@ export function hasSavedSession(accountId?: string): boolean {
  */
 export function clearBrowserLocks(accountId?: string): void {
   const dir = sessionDirFor(accountId);
-  for (const n of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+  // 맥/리눅스는 Singleton*, 윈도우는 lockfile 을 남긴다
+  for (const n of ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"]) {
     try {
       fs.rmSync(path.join(dir, n), { force: true, recursive: true });
     } catch {
@@ -91,8 +92,9 @@ export interface LaunchOptions {
 export async function launchContext(
   opts: LaunchOptions = {},
 ): Promise<BrowserContext> {
-  // 설치본에는 Chromium 이 없으므로 필요한 순간에 자동으로 받는다 (있으면 즉시 통과)
-  await ensureChromium();
+  // 설치본에는 Chromium 이 없으므로 필요한 순간에 자동으로 받는다 (있으면 즉시 통과).
+  // 회사 방화벽 등으로 못 받으면 PC에 이미 있는 Edge/Chrome 로 대신 실행한다.
+  const fallbackChannel = await ensureBrowserAvailable();
   const sessionDir = sessionDirFor(opts.accountId);
   ensureDir(sessionDir);
   clearBrowserLocks(opts.accountId); // 이전 비정상 종료가 남긴 잠금 제거 → 즉시 닫힘 방지
@@ -110,7 +112,15 @@ export async function launchContext(
   // SENBI_USE_CHROME=1 이면 실제 크롬 채널 사용 — 단, 이땐 크롬을 완전히 종료해야 함.
   const useRealChrome = process.env.SENBI_USE_CHROME === "1";
   let context: BrowserContext;
-  if (useRealChrome) {
+  if (fallbackChannel) {
+    // Chromium 을 못 받은 상황 — 설치된 브라우저로 진행 (윈도우엔 Edge 가 항상 있다)
+    context = await chromium.launchPersistentContext(sessionDir, {
+      ...base,
+      channel: fallbackChannel,
+      userAgent: DESKTOP_UA,
+    });
+    log.info(`${fallbackChannel} 브라우저로 실행 (전용 Chromium 을 받지 못해 대체)`);
+  } else if (useRealChrome) {
     try {
       context = await chromium.launchPersistentContext(sessionDir, {
         ...base,

@@ -3,6 +3,7 @@ import { ensureAppDirs } from "./config/paths";
 import { rescheduleAll, stopScheduler } from "./scheduler";
 import { startDashboard } from "./server/dashboard";
 import { prefetchChromium } from "./naver/browserSetup";
+import { preflight } from "./core/preflight";
 import { createLogger } from "./core/logger";
 
 const log = createLogger("main");
@@ -12,10 +13,11 @@ async function main() {
   const port = Number(process.env.SENBI_AUTO_PORT ?? 3060);
 
   log.info("senbi-auto 데몬 시작");
+  await preflight(); // 실행 환경 점검 (이미지 모듈 등)
   rescheduleAll(); // 저장된 설정으로 스케줄 등록
-  await startDashboard(port);
+  const bound = await startDashboard(port);
 
-  log.info(`준비 완료 — 브라우저에서 http://localhost:${port} 열기`);
+  log.info(`준비 완료 — 브라우저에서 http://localhost:${bound} 열기`);
   prefetchChromium(); // 자동화용 브라우저가 없으면 백그라운드로 미리 받아 둔다
 }
 

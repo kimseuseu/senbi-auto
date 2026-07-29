@@ -43,7 +43,8 @@ function publicSettings(s: Settings) {
   };
 }
 
-export async function startDashboard(port: number): Promise<void> {
+/** @returns 실제로 바인딩된 포트 (요청 포트가 사용 중이면 다음 포트) */
+export async function startDashboard(port: number): Promise<number> {
   ensureMigrated(); // 최초 1회: 기존 단일 설정을 '계정'으로 이관
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
 
@@ -233,6 +234,22 @@ export async function startDashboard(port: number): Promise<void> {
     return { message: msg };
   });
 
-  await app.listen({ port, host: "127.0.0.1" });
-  log.info(`대시보드: http://localhost:${port}`);
+  // 포트가 이미 쓰이는 중이면(윈도우에서 흔하다) 다음 포트로 옮겨 뜬다.
+  // 실제로 잡은 포트는 stdout 마커로 알려 준다 — Electron 이 이 값으로 창을 연다.
+  let bound = port;
+  for (let i = 0; i < 20; i++) {
+    try {
+      await app.listen({ port: bound, host: "127.0.0.1" });
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "EADDRINUSE" && code !== "EACCES") throw err;
+      log.warn(`${bound} 포트 사용 중 — ${bound + 1} 로 재시도`);
+      bound += 1;
+      if (i === 19) throw err;
+    }
+  }
+  process.stdout.write(`SENBI_PORT=${bound}\n`);
+  log.info(`대시보드: http://localhost:${bound}`);
+  return bound;
 }
