@@ -1,5 +1,5 @@
 import type { BrowserContext, Frame, Locator, Page } from "playwright";
-import type { ImageAsset, PreparedSignature, QuoteStyle } from "../core/types";
+import type { ImageAsset, PreparedSignature, QuoteStyle, BlockStyle, TextRun } from "../core/types";
 import type { BodyBlock } from "../generate/structure";
 import { humanDelay } from "./session";
 import { shouldStop } from "../core/cancel";
@@ -71,10 +71,13 @@ export interface PublishInput {
   textStyle?: {
     bodyFont?: string;
     bodySize?: string;
+    bodyColor?: string;
     headingBold?: boolean;
     headingItalic?: boolean;
     headingSize?: string;
   };
+  /** 본문 안에서 특정 문구만 색을 다르게 쓰는 규칙 (상호명 등) */
+  inlineColors?: { text: string; style: BlockStyle }[];
   images: ImageAsset[]; // 본문 이미지 (1장씩 단독·가운데)
   thumbnail?: ImageAsset; // 맨 위 단독·가운데
   /** 제품사양 표 — 자주 묻는 질문 앞에 단독으로 넣는다 */
@@ -132,7 +135,8 @@ async function applyFontFamily(frame: Frame, font?: string): Promise<void> {
  */
 const TOOLBAR_TIMEOUT = 3000;
 
-async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
+/** 글자크기만 지정 (정렬은 건드리지 않는다 — 조각 단위 서식에 쓴다) */
+async function applySize(frame: Frame, sizeCode: string): Promise<void> {
   try {
     await frame.locator(SEL.fontSizeButton).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(350);
@@ -144,6 +148,20 @@ async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
   } catch (err) {
     log.warn(`글자크기(${sizeCode}) 설정 실패(무시)`, err);
   }
+}
+
+/** 굵게 토글 */
+async function toggleBold(frame: Frame): Promise<void> {
+  try {
+    await frame.locator(SEL.boldButton).first().click({ timeout: TOOLBAR_TIMEOUT });
+    await frame.waitForTimeout(220);
+  } catch (err) {
+    log.warn("굵게 토글 실패(무시)", err);
+  }
+}
+
+async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
+  await applySize(frame, sizeCode);
   try {
     await frame.locator(SEL.alignButton).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(350);
@@ -234,6 +252,119 @@ async function applyColor(frame: Frame, hex: string): Promise<boolean> {
     log.warn(`글자색(${target}) 적용 실패(무시)`, err);
     return false;
   }
+}
+
+/**
+ * 본문에 이미 찍힌 글에서 **특정 문구만** 골라 색을 입힌다.
+ *
+ * 원문은 "각종 집기 렌탈 전문 MBC렌탈입니다." 처럼 줄 안에서 상호명만 색이 다르다.
+ * 우리가 쓴 본문은 문장이 매번 달라 타이핑 중에 조각을 나눌 수 없으니,
+ * 다 찍은 뒤 그 문구가 있는 문단을 찾아 그 글자만 선택해 칠한다.
+ * (Home → →키로 앞까지 이동 → Shift+→ 로 문구 길이만큼 선택)
+ */
+async function applyInlineColors(
+  frame: Frame,
+  page: Page,
+  rules: { text: string; style: BlockStyle }[],
+): Promise<void> {
+  const list = rules.filter((r) => r.text.trim().length >= 2 && r.style.color);
+  if (list.length === 0) return;
+
+  let ok = 0;
+  let tried = 0;
+  for (const rule of list) {
+    const needle = rule.text.trim();
+    // 문단마다 이 문구가 몇 번째 글자에서 시작하는지 찾는다 (앞에서부터 최대 3곳)
+    const spotsJs = `(() => {
+      const ps = Array.from(document.querySelectorAll(".se-text-paragraph"));
+      const needle = ${JSON.stringify(needle)};
+      const out = [];
+      for (let i = 0; i < ps.length && out.length < 3; i++) {
+        const t = (ps[i].innerText || "").replace(/\\u200b/g, "");
+        const at = t.indexOf(needle);
+        if (at >= 0) out.push({ idx: i, at });
+      }
+      return JSON.stringify(out);
+    })()`;
+    let spots: { idx: number; at: number }[] = [];
+    try {
+      spots = JSON.parse(String(await frame.evaluate(spotsJs)));
+    } catch {
+      spots = [];
+    }
+    for (const spot of spots) {
+      tried++;
+      try {
+        const para = frame.locator(".se-text-paragraph").nth(spot.idx);
+        await para.scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
+        await para.click({ timeout: 2500 });
+        await frame.waitForTimeout(200);
+        await page.keyboard.press("Home");
+        for (let i = 0; i < spot.at; i++) await page.keyboard.press("ArrowRight");
+        for (let i = 0; i < needle.length; i++) await page.keyboard.press("Shift+ArrowRight");
+        await frame.waitForTimeout(200);
+        if (rule.style.bold) await toggleBold(frame);
+        const done = await applyColor(frame, rule.style.color!);
+        if (rule.style.bold) await toggleBold(frame);
+        await page.keyboard.press("End"); // 선택 해제
+        if (done) ok++;
+      } catch (err) {
+        log.warn(`문구 색(${needle}) 적용 실패`, err);
+      }
+    }
+  }
+  if (tried > 0) log.info(`문구 색 적용 ${ok}/${tried} (규칙 ${list.length}개)`);
+}
+
+/**
+ * 원문의 글자 조각(run) 서식을 그대로 살려 타이핑한다.
+ *
+ * 원문은 한 줄 안에서 상호명만 색을 바꾸거나("각종 집기 렌탈 전문 MBC렌탈입니다."),
+ * 서명 줄을 손글씨체·파란색·24pt로 쓴다. 줄 전체를 칠하는 방식으로는 이걸 못 따라간다.
+ * 조각마다 서식을 먼저 맞춰 두고 타이핑하면 선택 없이 그대로 재현된다.
+ */
+async function typeStyledRuns(
+  page: Page,
+  frame: Frame,
+  runs: TextRun[],
+  base: { font?: string; size?: string; color?: string },
+): Promise<void> {
+  let curFont = base.font;
+  let curSize = base.size;
+  let curColor = base.color;
+  let curBold = false;
+
+  for (const r of runs) {
+    if (r.text === "\n") {
+      await page.keyboard.press("Shift+Enter");
+      continue;
+    }
+    const s = r.style ?? {};
+    const font = s.font ?? base.font;
+    const size = s.size ?? base.size;
+    const color = s.color ?? base.color;
+    const bold = Boolean(s.bold);
+
+    if (font && font !== curFont) {
+      await applyFontFamily(frame, font);
+      curFont = font;
+    }
+    if (size && size !== curSize) {
+      await applySize(frame, size);
+      curSize = size;
+    }
+    if (color && color !== curColor) {
+      await applyColor(frame, color);
+      curColor = color;
+    }
+    if (bold !== curBold) {
+      await toggleBold(frame);
+      curBold = bold;
+    }
+    await page.keyboard.type(r.text, { delay: 6 });
+  }
+  // 다음 줄에 굵게가 새어 나가지 않게 되돌린다
+  if (curBold) await toggleBold(frame);
 }
 
 /**
@@ -785,7 +916,16 @@ export async function publishPost(
           await insertOgLink(page, frame, b.url);
         } else if (b.type === "text") {
           await applyFormat(frame, input.textStyle?.bodySize ?? "fs19");
-          await page.keyboard.type(b.text, { delay: 6 });
+          if (b.runs && b.runs.length > 0) {
+            // 원문의 색·서체·크기·굵기를 조각 단위로 그대로 재현
+            await typeStyledRuns(page, frame, b.runs, {
+              font: input.textStyle?.bodyFont,
+              size: input.textStyle?.bodySize ?? "fs19",
+              color: input.textStyle?.bodyColor,
+            });
+          } else {
+            await page.keyboard.type(b.text, { delay: 6 });
+          }
           await page.keyboard.press("Enter");
           await page.keyboard.press("Enter");
           await humanDelay(0.15, 0.3);
@@ -799,27 +939,26 @@ export async function publishPost(
     // 5) 소제목·인용구 서식 — 모든 입력이 끝난 뒤 마지막에 (커서 갇힘 문제 회피)
     await applyStructuredFormats(frame, page, bodyBlocks, input.textStyle);
 
-    // 6) 원문의 색·굵기 재현 (서명 블록 + 인사말)
+    // 6) 원문의 색·굵기 재현
+    //    서명은 위에서 조각(run) 단위로 이미 그대로 찍었다.
+    //    여기서는 우리가 새로 쓴 본문에만 손댄다:
+    //      - 인사말 줄 전체 색·굵기
+    //      - 본문 곳곳의 상호명처럼 '문구 단위'로 색이 다른 부분
     const emphasis: { text: string; color?: string; bold?: boolean; where?: "head" | "tail" }[] = [];
-    // ⚠️ 서명 줄 색·굵기는 잠시 비활성.
-    //    본문 문단에 색이 잘못 칠해지는 현상(다크모드에서 회색 글씨로 보임)이 재현돼,
-    //    원인 규명 전까지는 잘못 칠하느니 안 칠하는 쪽을 택한다. (SENBI_SIG_EMPHASIS=1 로 실험 가능)
-    if (process.env.SENBI_SIG_EMPHASIS) {
-      for (const b of input.signature ?? []) {
-        if (b.type === "text" && b.style && (b.style.color || b.style.bold)) {
-          emphasis.push({ text: b.text, color: b.style.color, bold: b.style.bold, where: "tail" });
-        }
+    if (input.introStyle && bodyBlocks[0]?.kind === "text") {
+      // 인사말은 모바일 줄바꿈으로 여러 줄이 된다 — 줄마다 따로 칠해야 첫 줄만 색이 드는 일이 없다
+      for (const line of bodyBlocks[0].text.split("\n")) {
+        if (line.trim().length < 3) continue;
+        emphasis.push({
+          text: line,
+          color: input.introStyle.color,
+          bold: input.introStyle.bold,
+          where: "head",
+        });
       }
     }
-    if (input.introStyle && bodyBlocks[0]?.kind === "text") {
-      emphasis.push({
-        text: bodyBlocks[0].text,
-        color: input.introStyle.color,
-        bold: input.introStyle.bold,
-        where: "head",
-      });
-    }
     await applyEmphasis(frame, page, emphasis);
+    await applyInlineColors(frame, page, input.inlineColors ?? []);
 
     // 3) dryRun → 임시저장까지만
     if (input.dryRun) {

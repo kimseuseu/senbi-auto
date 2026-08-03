@@ -1,4 +1,4 @@
-import type { CrawledPost, ContentBlock, QuoteStyle, BlockStyle } from "../core/types";
+import type { CrawledPost, ContentBlock, QuoteStyle, BlockStyle, TextRun } from "../core/types";
 import { countChars } from "../core/text";
 
 export const MOBILE_UA =
@@ -126,6 +126,56 @@ function extractStyle(chunk: string): BlockStyle | undefined {
   return { font, size, color, bold, italic };
 }
 
+/** span 속성 + 내부 태그에서 서식을 뽑는다 (run 단위) */
+function styleFromSpan(attrs: string, inner: string): BlockStyle | undefined {
+  const font = attrs.match(/se-ff-([a-z0-9_-]+)/)?.[1];
+  const size = attrs.match(/se-fs-(fs\d+)/)?.[1];
+  // `background-color:`도 "color:"로 끝나서 같이 걸린다 → 앞에 '-'가 없는 color만
+  const color = attrs.match(/(?:^|[;"\s])color:\s*(#[0-9a-fA-F]{3,6})/)?.[1]?.toLowerCase();
+  const bold = /<b>|<strong>/.test(inner) || /se-weight-bold/.test(attrs);
+  const italic = /<i>|<em>/.test(inner) || /se-style-italic/.test(attrs);
+  if (!font && !size && !color && !bold && !italic) return undefined;
+  return { font, size, color, bold, italic };
+}
+
+/**
+ * 문단들을 '서식이 같은 글자 조각' 단위로 쪼갠다.
+ *
+ * 원문은 한 줄 안에서 상호명만 색을 바꾸는 식으로 쓴다. 문단 단위 서식만 보면
+ * 그 부분색을 재현할 수 없어서, span 하나하나를 run으로 담아 둔다.
+ * 줄이 바뀌는 자리에는 text "\n" run을 끼워 원문의 줄 구조를 유지한다.
+ */
+function extractRuns(chunk: string): TextRun[] | undefined {
+  const runs: TextRun[] = [];
+  const pPattern = /<p[^>]*class="[^"]*se-text-paragraph[^"]*"[^>]*>([\s\S]*?)<\/p>/g;
+  let p: RegExpExecArray | null;
+  let firstPara = true;
+  while ((p = pPattern.exec(chunk)) !== null) {
+    const para = p[1] ?? "";
+    if (!firstPara) runs.push({ text: "\n" });
+    firstPara = false;
+    let matched = false;
+    for (const s of para.matchAll(/<span([^>]*)>([\s\S]*?)<\/span>/g)) {
+      const raw = s[2] ?? "";
+      const text = decodeEntities(raw.replace(/<[^>]+>/g, ""))
+        .replace(/​/g, "")
+        .replace(/[ \t]+/g, " ");
+      matched = true;
+      if (!text.trim()) continue; // 빈 span(zero-width)은 서식만 있고 글자가 없다
+      runs.push({ text, style: styleFromSpan(s[1] ?? "", raw) });
+    }
+    if (!matched) {
+      const text = decodeEntities(para.replace(/<[^>]+>/g, ""))
+        .replace(/​/g, "")
+        .replace(/[ \t]+/g, " ");
+      if (text.trim()) runs.push({ text });
+    }
+  }
+  // 끝쪽 빈 줄 정리
+  while (runs.length && runs[runs.length - 1]!.text === "\n") runs.pop();
+  return runs.length > 0 ? runs : undefined;
+}
+
 /** 인용구 컴포넌트 클래스(se-l-quotation_*)에서 스타일 판별 */
 function quoteStyleFromClass(cls: string): QuoteStyle {
   const s = cls.match(/se-l-quotation_([a-z]+)/)?.[1];
@@ -182,6 +232,7 @@ function extractBlocks(container: string): ContentBlock[] {
           text,
           style: quoteStyleFromClass(cls),
           textStyle: extractStyle(chunk),
+          runs: extractRuns(chunk),
         });
       continue;
     }
@@ -189,13 +240,14 @@ function extractBlocks(container: string): ContentBlock[] {
       const text = paraTexts(chunk);
       if (!text) continue;
       const style = extractStyle(chunk);
-      if (/se-section-sectionTitle/.test(chunk)) blocks.push({ type: "heading", text, style });
-      else blocks.push({ type: "text", text, style });
+      const runs = extractRuns(chunk);
+      if (/se-section-sectionTitle/.test(chunk)) blocks.push({ type: "heading", text, style, runs });
+      else blocks.push({ type: "text", text, style, runs });
       continue;
     }
     if (kind === "se-text") {
       const text = paraTexts(chunk);
-      if (text) blocks.push({ type: "text", text, style: extractStyle(chunk) });
+      if (text) blocks.push({ type: "text", text, style: extractStyle(chunk), runs: extractRuns(chunk) });
       continue;
     }
     // se-oglink · se-document 등은 무시

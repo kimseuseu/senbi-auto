@@ -108,11 +108,22 @@ export interface BlockStyle {
   italic?: boolean;
 }
 
+/**
+ * 한 문단 안에서 서식이 같은 글자 조각.
+ *
+ * 원문은 "각종 집기 렌탈 전문 MBC렌탈입니다." 처럼 **한 줄 안에서 상호명만 색이 다른**
+ * 경우가 흔하다. 문단 단위 style만으로는 이걸 재현할 수 없어서 조각 단위로 따로 담는다.
+ */
+export interface TextRun {
+  text: string;
+  style?: BlockStyle;
+}
+
 /** 본문을 문서 순서대로 표현한 블록 (서명 감지·복사·구조 재현용) */
 export type ContentBlock =
-  | { type: "text"; text: string; style?: BlockStyle }
-  | { type: "heading"; text: string; style?: BlockStyle } // 소제목 (se-section-sectionTitle)
-  | { type: "quote"; text: string; style: QuoteStyle; textStyle?: BlockStyle } // 인용구 (se-quotation)
+  | { type: "text"; text: string; style?: BlockStyle; runs?: TextRun[] }
+  | { type: "heading"; text: string; style?: BlockStyle; runs?: TextRun[] } // 소제목 (se-section-sectionTitle)
+  | { type: "quote"; text: string; style: QuoteStyle; textStyle?: BlockStyle; runs?: TextRun[] } // 인용구 (se-quotation)
   | { type: "oglink"; url: string; title?: string } // 링크 카드 (se-oglink)
   | { type: "image"; url: string };
 
@@ -141,7 +152,7 @@ export interface ImageAsset {
 
 /** 준비 완료된 서명 블록 (순서대로 발행에 삽입) */
 export type PreparedSignatureBlock =
-  | { type: "text"; text: string; style?: BlockStyle } // 원문의 색·굵기까지 재현
+  | { type: "text"; text: string; style?: BlockStyle; runs?: TextRun[] } // 원문의 색·굵기까지 재현
   | { type: "oglink"; url: string; title?: string } // 링크 카드 (URL 입력 후 카드만 남김)
   | { type: "image"; image: ImageAsset };
 export type PreparedSignature = PreparedSignatureBlock[];

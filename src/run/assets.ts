@@ -101,7 +101,7 @@ async function prepareSignatureBlocks(sig: Signature): Promise<PreparedSignature
     } else {
       // text·heading·quote 모두 서명에선 텍스트로 취급 (원문 색·굵기는 그대로 가져간다)
       const style = b.type === "quote" ? b.textStyle : b.style;
-      out.push({ type: "text", text: b.text, style });
+      out.push({ type: "text", text: b.text, style, runs: b.runs });
     }
   }
   return out;

@@ -87,6 +87,58 @@ export function analyzeTextStyle(posts: CrawledPost[]): TextStyleProfile {
   };
 }
 
+/** 본문 안에서 특정 문구만 색이 다른 규칙 (상호명 등) */
+export interface InlineColorRule {
+  text: string;
+  style: BlockStyle;
+  /** 몇 편에서 이 문구를 이 색으로 썼는지 */
+  posts: number;
+}
+
+/**
+ * 본문 기본색과 다른 색이 걸린 짧은 문구를 학습한다.
+ *
+ * 원문은 인사말의 상호명처럼 줄 안의 한 단어만 색을 바꾼다. 여러 글에 반복해서
+ * 나오는 것만 규칙으로 삼아야 그 글에만 있던 우연한 강조를 따라가지 않는다.
+ * 서명 영역(글 말미)은 원문 블록을 통째로 복사하므로 여기서 제외한다.
+ */
+export function analyzeInlineColors(
+  posts: CrawledPost[],
+  bodyColor?: string,
+  /** 인사말 줄 색 — 이 색은 줄 전체에 따로 칠하므로 문구 규칙에서 뺀다 */
+  introColor?: string,
+  minPosts = 2,
+): InlineColorRule[] {
+  const base = (bodyColor ?? "#000000").toLowerCase();
+  const intro = introColor?.toLowerCase();
+  const seen = new Map<string, { style: BlockStyle; posts: Set<number> }>();
+
+  posts.forEach((p, pi) => {
+    // 말미 6블록은 서명으로 보고 건너뛴다
+    const body = p.blocks.slice(0, Math.max(0, p.blocks.length - 6));
+    for (const b of body) {
+      if (b.type !== "text" && b.type !== "heading" && b.type !== "quote") continue;
+      for (const r of b.runs ?? []) {
+        const color = r.style?.color?.toLowerCase();
+        const text = r.text.trim();
+        if (!color || color === base || (intro && color === intro)) continue;
+        // 문장 전체가 아니라 '문구'만 — 너무 길면 우리 글에 그대로 나올 리 없다
+        if (text.length < 2 || text.length > 16) continue;
+        const key = `${text}|${color}`;
+        const hit = seen.get(key) ?? { style: { ...r.style, color }, posts: new Set<number>() };
+        hit.posts.add(pi);
+        seen.set(key, hit);
+      }
+    }
+  });
+
+  return [...seen.entries()]
+    .map(([key, v]) => ({ text: key.split("|")[0]!, style: v.style, posts: v.posts.size }))
+    .filter((r) => r.posts >= minPosts)
+    .sort((a, b) => b.posts - a.posts)
+    .slice(0, 8);
+}
+
 /** 학습 블로그의 섹션-제목 표기 방식 프로필 */
 export interface HeadingStyleProfile {
   style: "heading" | "quote"; // 소제목 vs 인용구 (더 많이 쓴 쪽)

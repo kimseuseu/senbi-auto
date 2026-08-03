@@ -1,7 +1,12 @@
 import { getSettings, resolveApiKey, type Settings } from "../config/settings";
 import { crawlBlog, toReferences } from "../crawl/crawler";
 import { generateFromReferences, keywordTags } from "../generate";
-import { analyzeHeadingStyle, analyzeTextStyle, buildStructuredBody } from "../generate/structure";
+import {
+  analyzeHeadingStyle,
+  analyzeTextStyle,
+  analyzeInlineColors,
+  buildStructuredBody,
+} from "../generate/structure";
 import { recentTitles, overlapsExisting } from "../generate/keywords";
 import {
   assertKeywordAllowed,
@@ -199,6 +204,7 @@ export async function runPostJob(
     const publishStyle = {
       bodyFont: textStyle.bodyFont,
       bodySize: textStyle.bodySize,
+      bodyColor: textStyle.bodyColor,
       headingBold: useQuote ? textStyle.quoteBold : textStyle.headingBold,
       headingItalic: useQuote ? textStyle.quoteItalic : textStyle.headingItalic,
       headingSize: useQuote ? textStyle.quoteSize : textStyle.headingSize,
@@ -206,6 +212,26 @@ export async function runPostJob(
     log.info(
       `글자 서식 학습: 서체 ${publishStyle.bodyFont ?? "기본"} · 본문 ${publishStyle.bodySize ?? "fs19"} · ${useQuote ? "인용구" : "소제목"} ${publishStyle.headingSize ?? "기본"}${publishStyle.headingBold ? " 굵게" : ""}${publishStyle.headingItalic ? " 기울임" : ""}`,
     );
+
+    // 본문 안에서 상호명처럼 문구만 색이 다른 규칙 학습
+    const learnedColors = analyzeInlineColors(posts, textStyle.bodyColor, textStyle.introColor);
+    // 거의 모든 학습 글에 나오는 문구 = 그 블로그의 상호명.
+    // 우리 상호 표기가 다르면(예: 학습 "MBC렌탈" vs 우리 "엠비씨렌탈") 우리 표기에도 같은 색을 준다.
+    const brand = settings.brandName?.trim();
+    const brandLike = Math.max(2, Math.ceil(posts.length * 0.7));
+    const inlineColors = learnedColors.flatMap((r) => {
+      const out = [{ text: r.text, style: r.style }];
+      if (brand && brand !== r.text && r.posts >= brandLike) {
+        out.push({ text: brand, style: r.style });
+      }
+      return out;
+    });
+    if (learnedColors.length > 0) {
+      log.info(
+        `문구 색 학습: ${learnedColors.map((r) => `"${r.text}" ${r.style.color}(${r.posts}편)`).join(" · ")}` +
+          (inlineColors.length > learnedColors.length ? ` → 우리 상호 "${brand}"에도 적용` : ""),
+      );
+    }
     const structuredBody = buildStructuredBody(
       result.content,
       result.headings ?? [],
@@ -250,6 +276,7 @@ export async function runPostJob(
         structuredBody,
         textStyle: publishStyle,
         introStyle: { color: textStyle.introColor, bold: textStyle.introBold },
+        inlineColors,
         images: pa.bodyImages,
         thumbnail: pa.thumbnail,
         specImage: pa.specImage,
