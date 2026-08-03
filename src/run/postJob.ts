@@ -12,6 +12,7 @@ import { buildPostAssets, keywordHasSource } from "./assets";
 import { getTemplate } from "../core/templates";
 import { addDraft, markPublished, type GeneratedDraft } from "../core/drafts";
 import { logPublished, usedKeywords } from "../core/activity";
+import { markImagesUsed, sourceUrl } from "../core/usedImages";
 import { launchContext, isLoggedIn, closeContext } from "../naver/session";
 import { publishPost } from "../naver/publish";
 import { markSessionInvalid, markSessionValid } from "../naver/sessionState";
@@ -149,6 +150,30 @@ export async function runPostJob(
     // 3) 생성 (템플릿 지침 반영)
     const result = await generateFromReferences(settings, refs, keyword, apiKey, instructions);
 
+    // 3-1) 유사문서 게이트 — 참고글을 그대로 옮겨 쓴 글은 발행하지 않는다.
+    //      같은 회사 블로그끼리 비슷한 글이 올라가면 네이버가 하나를 유사문서로 처리해
+    //      나중에 올린 쪽(보통 새 블로그)이 검색에서 빠진다. 초안으로만 남기고 사람이 손보게 한다.
+    if (result.overlap) {
+      const pct = Math.round(result.overlap.ratio * 100);
+      if (result.overlapOk === false) {
+        const sample = result.overlap.hits
+          .slice(0, 3)
+          .map((h) => `"${h.sentence.slice(0, 28)}…"`)
+          .join(" · ");
+        log.warn(
+          `유사문서 위험 — 참고글과 겹치는 문장 ${pct}% (재작성해도 안 내려감) → 발행하지 않고 초안만 저장. 예: ${sample}`,
+        );
+        const draft = addDraft(result, []);
+        return {
+          ok: true,
+          draft,
+          published: false,
+          error: `참고글과 문장이 ${pct}% 겹쳐 발행을 막았습니다(유사문서 위험). 초안에서 직접 고쳐 올려 주세요.`,
+        };
+      }
+      log.info(`독창성 검사 통과 — 참고글과 겹치는 문장 ${pct}%`);
+    }
+
     // 4) 이미지·썸네일·서명 준비 (키워드에 맞는 원본 글의 이미지만)
     const pa = await buildPostAssets(posts, keyword, settings, apiKey);
 
@@ -181,8 +206,16 @@ export async function runPostJob(
     log.info(
       `글자 서식 학습: 서체 ${publishStyle.bodyFont ?? "기본"} · 본문 ${publishStyle.bodySize ?? "fs19"} · ${useQuote ? "인용구" : "소제목"} ${publishStyle.headingSize ?? "기본"}${publishStyle.headingBold ? " 굵게" : ""}${publishStyle.headingItalic ? " 기울임" : ""}`,
     );
-    const structuredBody = buildStructuredBody(result.content, result.headings ?? [], styleProfile);
-    const headingBlocks = structuredBody.filter((b) => b.kind !== "text").length;
+    const structuredBody = buildStructuredBody(
+      result.content,
+      result.headings ?? [],
+      styleProfile,
+      result.title,
+    );
+    if (styleProfile.closingQuote?.use) {
+      log.info(`마무리 인용구 추가 — 제목 반복(${styleProfile.closingQuote.style} 스타일)`);
+    }
+    const headingBlocks = structuredBody.filter((b) => b.kind !== "text" && !b.closing).length;
     if (headingBlocks > 0) {
       log.info(
         `구조 판별: 섹션 제목 ${headingBlocks}개 → ${styleProfile.style === "quote" ? `인용구(${styleProfile.quoteStyle})` : "소제목"} 스타일`,
@@ -219,8 +252,10 @@ export async function runPostJob(
         introStyle: { color: textStyle.introColor, bold: textStyle.introBold },
         images: pa.bodyImages,
         thumbnail: pa.thumbnail,
+        specImage: pa.specImage,
         signature: pa.signature,
         tags: keywordTags(keyword), // 이 글 키워드 기반 태그 (다른 주제 안 섞음)
+        category: settings.postCategory,
         visibility: settings.postVisibility,
       });
       if (pub.ok && pub.mode === "published") {
@@ -233,8 +268,15 @@ export async function runPostJob(
           imageCount:
             pa.bodyImages.length +
             (pa.thumbnail ? 1 : 0) +
+            (pa.specImage ? 1 : 0) +
             pa.signature.filter((b) => b.type === "image").length,
         });
+        // 이 글에 쓴 크롤 사진은 다음 글에서 피한다 (사진까지 겹치면 유사문서 판정이 강해진다)
+        markImagesUsed(
+          [...pa.bodyImages, ...(pa.thumbnail ? [pa.thumbnail] : []), ...(pa.specImage ? [pa.specImage] : [])]
+            .map((a) => sourceUrl(a.source))
+            .filter((u): u is string => Boolean(u)),
+        );
         markSessionValid(opts.accountId); // 발행 성공 = 세션 정상
         log.info(`✅ 발행 완료: "${result.title}" → ${pub.url}`);
         return { ok: true, draft, published: true, url: pub.url };

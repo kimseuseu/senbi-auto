@@ -54,7 +54,7 @@ src/
   generate/ pipeline·index·social               Claude 생성/검증 + 댓글·서로이웃 문구
   naver/    session·publish·neighbor            Playwright 세션·발행·이웃      ⚠️튜닝
   run/      postJob·neighborJob                 오케스트레이션
-  scheduler.ts                                  node-cron 예약·수동 실행
+  jobs.ts                                       수동 실행(원버튼) 오케스트레이션·동시실행 잠금
   server/   dashboard·public/index.html         Fastify + 로컬 대시보드      ✅검증
   index.ts                                      데몬 진입점
   scripts/  crawl-test·gen-test·img-test·login·browser-check
@@ -110,11 +110,11 @@ npm run crawl -- <blogId> 5              # 크롤만
 npm run gen   -- <blogId> "<메인키워드>" # 크롤 → 생성 (API 키 필요)
 ```
 
-대시보드에서 대상 블로그·주제 키워드·스케줄·이미지 소스·이웃 한도를 설정하고, `자동 발행`을 켜면 cron 스케줄에 따라 자동 실행된다. 백그라운드 상주는 맥이 깨어 있어야 한다(수면 시 `caffeinate` 권장, 완전 무인 24시간은 상시 켜진 PC/서버 필요).
+대시보드에서 대상 블로그·주제 키워드·이미지 소스·이웃 한도를 설정하고, `오늘 작업 시작`을 누르면 선택한 계정으로 발행·이웃 관리가 진행된다. **예약 실행(cron)은 없다** — 앱을 켜고 버튼을 누를 때만 동작하므로, 자리를 비운 사이에 혼자 글이 올라가는 일은 없다.
 
 ## 현재 상태
 
-- ✅ **크롤·이미지 필터·생성 파이프라인·대시보드·스케줄러**: 구현·검증 완료
+- ✅ **크롤·이미지 필터·생성 파이프라인·대시보드**: 구현·검증 완료
 - ⚠️ **네이버 발행/이웃 DOM 셀렉터**(`naver/publish.ts`, `naver/neighbor.ts`): 구조 완성, **로그인 세션에서 셀렉터 1회 튜닝 필요**(SmartEditor·공감·댓글·서로이웃의 실제 DOM에 맞춤). 셀렉터는 각 파일 상단 `SEL`에 모여 있다.
 
 ## 안전·정책

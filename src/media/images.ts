@@ -205,6 +205,35 @@ export async function prepareOneFiltered(
   }
 }
 
+/**
+ * 대표 이미지(썸네일)·사양표용 처리 — 화질은 지키고 파일만 새로 만든다.
+ *
+ * 일반 본문 이미지는 밝기·채도를 흔들어 원본과 달라 보이게 하지만,
+ * 썸네일은 검색 목록에서 클릭을 좌우하므로 어두워지거나 흐려지면 손해다.
+ * 그래서 색은 건드리지 않고, 가장자리만 아주 살짝 자른 뒤 고품질로 재인코딩한다.
+ * (재인코딩만으로도 픽셀 해시는 바뀌어 완전 동일 이미지 판정은 피한다)
+ */
+export async function prepareSharp(url: string): Promise<ImageAsset | null> {
+  try {
+    const raw = await downloadImage(url);
+    const img = sharp(raw, { failOn: "none" }).rotate();
+    const meta = await img.metadata();
+    const w = meta.width ?? 0;
+    const h = meta.height ?? 0;
+    let pipeline = img;
+    if (w > 200 && h > 200) {
+      const dx = Math.max(1, Math.round(w * 0.008));
+      const dy = Math.max(1, Math.round(h * 0.008));
+      pipeline = pipeline.extract({ left: dx, top: dy, width: w - dx * 2, height: h - dy * 2 });
+    }
+    const out = await pipeline.jpeg({ quality: 95, mozjpeg: true }).toBuffer();
+    return await saveProcessed(out, `crawl:${url}`);
+  } catch (err) {
+    log.warn(`대표 이미지 처리 실패: ${url}`, err);
+    return null;
+  }
+}
+
 /** URL 목록을 순서 유지하며 최대 count개 필터 처리 */
 export async function prepareOrdered(
   urls: string[],

@@ -17,6 +17,8 @@ export interface Account {
   /** 주제 키워드를 AI가 자동으로 새로 뽑을지 (발행 블로그 최근 글과 안 겹치게) */
   autoKeyword: boolean;
   postVisibility: Visibility;
+  /** 이 계정 블로그에서 글이 올라갈 카테고리 이름 (비우면 블로그 기본값) */
+  postCategory: string;
   postsPerRun: number; // 발행할 글 수
   postIntervalMin: number; // 발행 텀 (글 사이 분)
   neighbor: NeighborSettings; // 이 계정 이웃 관리 설정
@@ -47,6 +49,7 @@ export function ensureMigrated(): void {
     topicKeywords: s.topicKeywords ?? [],
     autoKeyword: true, // 기본: 발행 블로그 최근 글과 안 겹치는 주제를 AI가 자동 선정
     postVisibility: s.postVisibility,
+    postCategory: s.postCategory ?? "",
     postsPerRun: s.postsPerRun ?? 1,
     postIntervalMin: 5,
     neighbor: s.neighbor,
@@ -92,6 +95,7 @@ export function addAccount(
     topicKeywords: partial.topicKeywords ?? [],
     autoKeyword: partial.autoKeyword ?? true,
     postVisibility: partial.postVisibility ?? "private",
+    postCategory: partial.postCategory ?? "",
     postsPerRun: partial.postsPerRun ?? 1,
     postIntervalMin: partial.postIntervalMin ?? 5,
     neighbor: partial.neighbor ?? structuredClone(s.neighbor),
@@ -137,6 +141,7 @@ export function resolveAccountSettings(acc: Account): Settings {
     topicKeywords: acc.topicKeywords,
     autoKeyword: acc.autoKeyword ?? true,
     postVisibility: acc.postVisibility,
+    postCategory: acc.postCategory ?? base.postCategory,
     postsPerRun: acc.postsPerRun,
     brandName: acc.name || base.brandName,
     neighbor: { ...base.neighbor, ...acc.neighbor },

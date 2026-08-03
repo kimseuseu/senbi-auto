@@ -6,13 +6,15 @@ import type {
 import type { Settings } from "../config/settings";
 import { detectSignature, type Signature } from "../generate/signature";
 import { isThumbnail } from "../generate/thumbnail";
+import { looksLikeSpecTable, isSpecTable } from "../generate/specTable";
 import {
   downloadImage,
   prepareImages,
-  prepareOneFiltered,
   prepareOrdered,
+  prepareSharp,
   prepareVerbatim,
 } from "../media/images";
+import { filterUnusedImages } from "../core/usedImages";
 import { createLogger } from "../core/logger";
 
 const log = createLogger("assets");
@@ -79,7 +81,9 @@ export function keywordHasSource(
 
 export interface PostAssets {
   thumbnail?: ImageAsset; // 맨 위 단독·가운데
-  bodyImages: ImageAsset[]; // 본문 콜라주용
+  bodyImages: ImageAsset[]; // 본문 이미지 (1장씩 단독 배치)
+  /** 제품사양 표 이미지 — 자주 묻는 질문 앞에 넣는다 */
+  specImage?: ImageAsset;
   signature: PreparedSignature; // 맨 아래 서명 (글·이미지 순서대로)
   /** 학습 블로그에 이 키워드 연관 글이 없어 이미지 연관성이 낮음 */
   weakMatch?: boolean;
@@ -146,14 +150,14 @@ export async function buildPostAssets(
 
   let pool = main.images.filter((u) => !isSig(u));
 
-  // 썸네일 판별 (풀 첫 이미지)
+  // 썸네일 판별 (풀 첫 이미지) — 대표 이미지는 색 보정 없이 화질 유지
   let thumbnail: ImageAsset | undefined;
   const first = pool[0];
   if (first) {
     try {
       const buf = await downloadImage(first);
       if (await isThumbnail(buf, apiKey, settings.model)) {
-        const t = await prepareOneFiltered(first, settings.filterStrength);
+        const t = await prepareSharp(first);
         if (t) {
           thumbnail = t;
           pool = pool.slice(1);
@@ -164,24 +168,71 @@ export async function buildPostAssets(
     }
   }
 
-  // 본문 이미지 (모자라면 다음 순위 연관 글의 이미지로 보충)
-  let bodyImages = await prepareOrdered(
-    pool,
-    settings.imagesPerPost,
-    settings.filterStrength,
-  );
-  if (bodyImages.length < settings.imagesPerPost) {
-    for (const p of ranked.slice(1)) {
-      if (bodyImages.length >= settings.imagesPerPost) break;
-      const extra = p.images.slice(1).filter((u) => !isSig(u));
-      const more = await prepareOrdered(
-        extra,
-        settings.imagesPerPost - bodyImages.length,
-        settings.filterStrength,
-      );
-      bodyImages = bodyImages.concat(more);
+  // 제품사양 표 찾기 — 값싼 사전 필터로 후보를 좁힌 뒤 비전으로 1장만 확인
+  let specImage: ImageAsset | undefined;
+  for (const url of pool.slice(0, 12)) {
+    try {
+      const buf = await downloadImage(url);
+      if (!(await looksLikeSpecTable(buf))) continue;
+      if (!(await isSpecTable(buf, apiKey, settings.model))) continue;
+      const s = await prepareSharp(url); // 표는 글씨가 있어 필터 걸면 뭉개진다
+      if (s) {
+        specImage = s;
+        pool = pool.filter((u) => u !== url);
+        log.info("제품사양 표 이미지 확보 — 자주 묻는 질문 앞에 배치");
+      }
+      break;
+    } catch {
+      /* 다음 후보 */
     }
   }
 
-  return { thumbnail, bodyImages, signature };
+  // 이미 발행에 쓴 사진은 뺀다 — 사진까지 겹치면 유사문서 판정이 강해진다
+  const beforeDedupe = pool.length;
+  pool = filterUnusedImages(pool);
+  if (beforeDedupe !== pool.length) {
+    log.info(`이전 글에 쓴 사진 ${beforeDedupe - pool.length}장 제외`);
+  }
+
+  // 내 이미지 폴더가 켜져 있으면 먼저 채운다 (학습 블로그 사진 재사용을 줄인다)
+  let bodyImages: ImageAsset[] = [];
+  if (settings.imageSources.includes("myFolder")) {
+    bodyImages = await prepareImages({
+      crawledImageUrls: [],
+      count: settings.imagesPerPost,
+      sources: ["myFolder"],
+      filterStrength: settings.filterStrength,
+    });
+    if (bodyImages.length > 0) log.info(`내 이미지 폴더에서 ${bodyImages.length}장 우선 사용`);
+  }
+
+  // 모자란 만큼 크롤 이미지로 채운다.
+  // ⚠️ 보충은 '같은 주제 글'에서만 한다. 순위만 보고 아무 글이나 끌어오면
+  //    그레이팅 도크 글에 정육 쇼케이스 사진이 섞이는 식으로 글과 사진이 어긋난다.
+  if (bodyImages.length < settings.imagesPerPost && settings.imageSources.includes("crawl")) {
+    const need = () => settings.imagesPerPost - bodyImages.length;
+    bodyImages = bodyImages.concat(
+      await prepareOrdered(pool, need(), settings.filterStrength),
+    );
+    if (need() > 0) {
+      // 같은 키워드가 제목에 들어 있는 글에서만 추가로 가져온다
+      const sameTopic = ranked
+        .slice(1)
+        .filter((p) => keywordHasSource([p], keyword) || p.title.includes(keyword));
+      for (const p of sameTopic) {
+        if (need() <= 0) break;
+        const extra = filterUnusedImages(p.images.slice(1).filter((u) => !isSig(u)));
+        const more = await prepareOrdered(extra, need(), settings.filterStrength);
+        if (more.length > 0) log.info(`같은 주제 글 "${p.title.slice(0, 20)}"에서 ${more.length}장 보충`);
+        bodyImages = bodyImages.concat(more);
+      }
+    }
+    if (need() > 0) {
+      log.info(
+        `사진 ${bodyImages.length}/${settings.imagesPerPost}장만 확보 — 주제가 다른 사진을 섞지 않고 이대로 발행합니다`,
+      );
+    }
+  }
+
+  return { thumbnail, bodyImages, specImage, signature };
 }

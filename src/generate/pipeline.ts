@@ -9,10 +9,12 @@ import type {
 } from "../core/types";
 import { computeScore } from "../core/score";
 import { computeGeoScore } from "../core/geoScore";
+import { analyzeOverlap, collectHeadingLines, type OverlapReport } from "../core/similarity";
 import {
   countChars,
   countCharsWithSpaces,
   wrapForMobile,
+  splitFaqBlocks,
   findRemainingWords,
 } from "../core/text";
 
@@ -23,6 +25,21 @@ const TARGET_MIN = 1000;
 const TARGET_MAX = 1200;
 const HARD_MIN = 950;
 const HARD_MAX = 1300;
+
+/**
+ * 참고글과 겹치는 문장 비율의 상한. 넘으면 다시 쓴다.
+ * 같은 회사 블로그끼리 비슷한 글이 올라가면 네이버가 하나를 유사문서로 처리해
+ * 나중에 올린 쪽(보통 새 블로그)이 검색에서 빠진다.
+ */
+const OVERLAP_LIMIT = 0.3;
+/** 재작성 시도 횟수 (1회 생성 + 최대 2회 재작성) */
+const MAX_REWRITES = 2;
+
+const ORIGINALITY_RULE = `참고글은 **문체와 구성만** 배우는 자료다. 문장을 옮겨 쓰지 않는다:
+- 참고글의 문장을 그대로, 또는 단어 몇 개만 바꿔 쓰지 않는다. 같은 내용이라도 문장 구조·어순·서술 각도를 바꿔 처음부터 새로 쓴다.
+- 소제목은 참고글에 쓰인 문구를 재사용하지 않고 새로 짓는다.
+- 참고글에 나온 예시(장소·상황·비유)를 그대로 가져오지 말고, 같은 주제의 다른 장면으로 바꿔 쓴다.
+- 참고글에 없는 각도(주의할 점, 고르는 기준, 준비물, 실제 쓰는 순서 등)를 최소 한 섹션은 넣어 정보량을 더한다.`;
 
 const BANNED_GUIDANCE = `네이버 블로그에서 저품질 판정을 받기 쉬운 표현은 절대 사용하지 않는다:
 - 과장·확정 광고성 표현: "100% 보장", "무조건", "최저가", "업계 최고", "완벽한", "파격", "초특가", "역대급 할인", "정품 보장", "완치", "부작용 없음" 등
@@ -195,12 +212,23 @@ export async function runPipeline(input: PipelineInput): Promise<GenerateResult>
 
   input.onProgress?.("references");
   const usedRefs = pickReferences(input.references, keywords);
+  const refTexts = usedRefs.map((r) => r.content);
+
+  // 참고글에서 소제목으로 쓰인 줄 — 그대로 재사용하면 복제로 보이므로 금지 목록으로 넘긴다
+  const bannedHeadings = collectHeadingLines(refTexts).slice(0, 40);
+  const bannedHeadingBlock =
+    bannedHeadings.length > 0
+      ? `\n\n[이미 쓴 소제목 — 이 문구들은 그대로 쓰지 말고 새로 지을 것]\n${bannedHeadings.map((h) => `- ${h}`).join("\n")}`
+      : "";
 
   // ---------- 1단계: 글 생성 ----------
   const genSystem = `너는 네이버 블로그 상위 노출 글쓰기 전문가다.
 아래 참고글들은 우리가 직접 작성해 온 블로그 글이다. 이 글들의 문체, 어조, 문장 길이, 도입-전개-마무리 구성, 독자에게 말 거는 방식을 학습해서 같은 사람이 쓴 것처럼 새 글을 작성한다.
 
 ${referenceBlock(usedRefs)}
+
+가장 중요한 규칙 — 독창성:
+${ORIGINALITY_RULE}${bannedHeadingBlock}
 
 작성 규칙:
 1. 본문 분량은 공백을 제외하고 한글 기준 ${TARGET_MIN}~${TARGET_MAX}자. 이 범위를 반드시 지킨다.
@@ -209,10 +237,14 @@ ${referenceBlock(usedRefs)}
 4. ${BANNED_GUIDANCE}
 5. 문단은 빈 줄로 구분하고, 마크다운 문법(#, *, - 등)은 쓰지 않는다. 글은 3~6개 섹션으로 나누고, 각 섹션 앞에 짧은 소제목 한 줄(문장 아님, 8~18자)을 둔다. 그 소제목 줄들을 본문에 쓴 그대로 headings 배열에도 담는다.
    또한 **줄을 "1." "2." 같은 번호나 "-", "•" 로 시작하지 않는다**(네이버 에디터가 목록 서식으로 바꿔 글이 어색해진다). 순서를 말해야 하면 "먼저", "그다음"처럼 문장으로 푼다.
-6. ${postTypeRule(input.postType ?? "info", input.productInfo)}
-7. ${identityRule(input.userInfo)}${
+6. 마지막에서 두 번째 섹션은 **자주 묻는 질문**으로 만든다. 소제목 아래에 질문·답변을 3개, 아래 형식 그대로 쓴다.
+   "Q. 질문 한 줄" 다음 줄에 "A. 답변 한두 줄". 각 Q와 A는 별도 문단(빈 줄로 구분)으로 둔다.
+   질문은 **반드시 물음표로 끝낸다**(물음표가 없으면 질문과 답이 한 줄에 붙어버린다).
+   질문은 독자가 실제로 검색할 법한 것(기간·설치·비용·수량 등)으로 고른다.
+7. ${postTypeRule(input.postType ?? "info", input.productInfo)}
+8. ${identityRule(input.userInfo)}${
     input.instructions?.trim()
-      ? `\n8. [사용자 추가 지침 — 반드시 반영] ${input.instructions.trim()}`
+      ? `\n9. [사용자 추가 지침 — 반드시 반영] ${input.instructions.trim()}`
       : ""
   }`;
 
@@ -244,6 +276,7 @@ ${referenceBlock(usedRefs)}
 3. 본문 분량은 공백 제외 ${TARGET_MIN}~${TARGET_MAX}자를 유지한다. 벗어나면 내용을 다듬어 맞춘다.
 4. 문단 구분(빈 줄)과 섹션 소제목 줄은 그대로 유지하고, 마크다운 문법은 쓰지 않는다.
    줄이 "1." "2." 같은 번호나 "-", "•" 로 시작하면 그 표기를 없애고 문장으로 자연스럽게 바꾼다.
+   단 **"Q." "A." 로 시작하는 줄은 그 표기를 반드시 그대로 둔다**(자주 묻는 질문 형식).
 5. 글의 주제, 문체, 키워드 배치는 바꾸지 않는다.
 6. 본문에 남아 있는 섹션 소제목 줄들을 그대로 headings 배열에 담는다.${keywordBlock}`;
 
@@ -289,8 +322,55 @@ ${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`,
     refined = { ...fixed, replacedWords: refined.replacedWords };
   }
 
+  // ---------- 3.5단계: 유사문서 게이트 ----------
+  // 참고글을 그대로 옮겨 쓴 문장이 많으면 다시 쓴다. 넘긴 채로 발행하면
+  // 네이버가 둘 중 하나를 유사문서로 처리해 새 블로그 쪽이 검색에서 빠진다.
+  let overlap = analyzeOverlap(refined.content, refTexts);
+  for (let attempt = 1; attempt <= MAX_REWRITES && overlap.ratio > OVERLAP_LIMIT; attempt++) {
+    input.onProgress?.("originality");
+    const worst = overlap.hits.slice(0, 12);
+    const rewriteSystem = `너는 블로그 글을 '베낀 티 안 나게' 다시 쓰는 전문가다.
+아래 글은 참고글의 문장을 그대로 옮긴 부분이 많아 중복 콘텐츠로 판정될 위험이 크다.
+글의 주제·문체·분량·섹션 구성·키워드 배치는 유지하되, **아래 지적된 문장들은 반드시 다른 문장으로 새로 쓴다.**
+
+${ORIGINALITY_RULE}
+
+[그대로 베낀 문장 — 전부 새로 쓸 것]
+${worst.map((h, i) => `${i + 1}. 내 글: "${h.sentence}"\n   원문: "${h.source}"`).join("\n")}
+
+바꿀 때 지킬 것:
+- 단어만 바꾸지 말고 문장을 다시 구성한다(어순·주어·서술 각도 변경).
+- 지적되지 않은 문장도 원문과 비슷하면 함께 손본다.
+- 소제목이 지적됐다면 새 문구로 바꾸고, headings 배열도 바꾼 문구로 채운다.
+- "Q." "A." 로 시작하는 줄의 표기는 유지한다.
+- 본문 분량은 공백 제외 ${TARGET_MIN}~${TARGET_MAX}자.
+
+${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`;
+
+    const rewriteMessage = await client.messages.create({
+      model: input.model,
+      max_tokens: MAX_TOKENS,
+      thinking: { type: "adaptive" },
+      system: rewriteSystem,
+      output_config: { format: { type: "json_schema", schema: GEN_SCHEMA } },
+      messages: [{ role: "user", content: `제목: ${refined.title}\n\n${refined.content}` }],
+    });
+    const rewritten = extractJson<{ title: string; content: string; headings: string[] }>(
+      rewriteMessage,
+      "독창성 재작성",
+    );
+    const next = analyzeOverlap(rewritten.content, refTexts);
+    // 더 나빠지면 이전 결과를 지킨다
+    if (next.ratio <= overlap.ratio) {
+      refined = { ...rewritten, replacedWords: refined.replacedWords };
+      overlap = next;
+    }
+    if (overlap.ratio <= OVERLAP_LIMIT) break;
+  }
+
   // ---------- 4단계: 모바일 줄바꿈 (단어 보존) ----------
   input.onProgress?.("wrap");
+  refined.content = splitFaqBlocks(refined.content); // Q./A. 를 문단으로 떼어낸 뒤 줄바꿈
   const wrappedContent = wrapForMobile(refined.content, input.lineWidth);
 
   // ---------- 5단계: 필터 단어 잔존 검사 ----------
@@ -309,6 +389,8 @@ ${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`,
     replacedWords: refined.replacedWords ?? [],
     remainingFilterWords: remaining,
     usedReferences: usedRefs.map((r) => r.title),
+    overlap,
+    overlapOk: overlap.ratio <= OVERLAP_LIMIT,
     postType: input.postType ?? "info",
     mainKeyword: input.mainKeyword,
     subKeywords: input.subKeywords,

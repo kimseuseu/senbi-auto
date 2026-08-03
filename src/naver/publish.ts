@@ -35,10 +35,19 @@ const SEL = {
   formatText: ".se-toolbar-option-text-format-text-button",
   formatSectionTitle: ".se-toolbar-option-text-format-sectionTitle-button",
   formatQuotation: ".se-toolbar-option-text-format-quotation-button",
-  quotationStyleOpen: ".se-toolbar-item-insert-quotation .se-document-toolbar-select-option-button",
   publishOpen: '[class*="publish_btn__"]', // 상단 발행(패널 열기)
   saveDraft: '[class*="save_btn__"]', // 저장(임시저장) — 저장목록(save_count_btn)과 구분
   tagInput: "#tag-input",
+  // 발행 패널의 카테고리 선택 (2026-08 실측)
+  //  <button class="selectbox_button__…" aria-label="카테고리 목록 버튼">대문</button>
+  //  <div role="menu"><li><input id="59_냉방기기"><label for="59_냉방기기">…</label></li>…
+  // 클래스는 해시가 붙어 바뀌므로 aria-label·role 같은 의미 속성을 먼저 쓴다.
+  categoryOpen: [
+    'button[aria-label*="카테고리"]',
+    '[class*="option_category"] [class*="selectbox_button"]',
+    '[class*="selectbox_button"]',
+  ],
+  categoryMenu: '[role="menu"]',
   confirmPublish: "[class*=confirm_btn]", // 패널 내 확정 발행
   visibility: {
     all: "#open_public",
@@ -66,10 +75,14 @@ export interface PublishInput {
     headingItalic?: boolean;
     headingSize?: string;
   };
-  images: ImageAsset[]; // 본문 콜라주용 (2장씩 그리드)
+  images: ImageAsset[]; // 본문 이미지 (1장씩 단독·가운데)
   thumbnail?: ImageAsset; // 맨 위 단독·가운데
+  /** 제품사양 표 — 자주 묻는 질문 앞에 단독으로 넣는다 */
+  specImage?: ImageAsset;
   signature?: PreparedSignature; // 맨 아래 서명 (글·이미지 순서대로)
   tags?: string[];
+  /** 발행할 카테고리 이름 (비우면 블로그 기본 카테고리) */
+  category?: string;
   visibility?: Visibility;
   /** true면 발행하지 않고 임시저장까지만 (안전 테스트용) */
   dryRun?: boolean;
@@ -111,23 +124,30 @@ async function applyFontFamily(frame: Frame, font?: string): Promise<void> {
   }
 }
 
-/** 현재 커서 위치에 글자크기(학습값·기본 19pt) + 가운데 정렬 적용 */
+/**
+ * 현재 커서 위치에 글자크기(학습값·기본 19pt) + 가운데 정렬 적용.
+ *
+ * ⚠️ 이미지가 선택돼 있으면 글자 툴바가 이미지 툴바로 바뀌어 이 버튼들이 사라진다.
+ *    그때 기본 타임아웃(30초)으로 기다리면 발행이 몇 분씩 늘어지므로 짧게 끊는다.
+ */
+const TOOLBAR_TIMEOUT = 3000;
+
 async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
   try {
-    await frame.locator(SEL.fontSizeButton).first().click();
+    await frame.locator(SEL.fontSizeButton).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(350);
     await frame
       .locator(`.se-toolbar-option-font-size-code-${sizeCode}-button`)
       .first()
-      .click({ timeout: 3000 });
+      .click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(250);
   } catch (err) {
     log.warn(`글자크기(${sizeCode}) 설정 실패(무시)`, err);
   }
   try {
-    await frame.locator(SEL.alignButton).first().click();
+    await frame.locator(SEL.alignButton).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(350);
-    await frame.locator(SEL.alignCenter).first().click({ timeout: 3000 });
+    await frame.locator(SEL.alignCenter).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(250);
   } catch (err) {
     log.warn("가운데 정렬 설정 실패(무시)", err);
@@ -321,14 +341,21 @@ async function applyEmphasis(
   log.info(`강조 서식(색·굵기) 적용 ${ok}/${list.length}`);
 }
 
-/** 인용구 스타일 → 툴바 옵션 버튼 (2026-07 실측) */
-const QUOTE_STYLE_BUTTON: Record<QuoteStyle, string> = {
-  default: ".se-toolbar-option-insert-quotation-default-button",
-  line: ".se-toolbar-option-insert-quotation-quotation_line-button",
-  bubble: ".se-toolbar-option-insert-quotation-quotation_bubble-button",
-  underline: ".se-toolbar-option-insert-quotation-quotation_underline-button",
-  postit: ".se-toolbar-option-insert-quotation-quotation_postit-button",
-  corner: ".se-toolbar-option-insert-quotation-quotation_corner-button",
+/**
+ * 인용구 스타일 → **이미 만든 인용구 블록의 모양을 바꾸는** 속성 툴바 버튼 (2026-08 실측).
+ *
+ * ⚠️ 상단 툴바의 "인용구 선택" 드롭다운(se-toolbar-option-insert-quotation-*)은
+ *    기존 블록을 바꾸는 게 아니라 **그 스타일로 새 인용구를 하나 더 삽입**한다.
+ *    (실측: 인용구 개수 1 → 2) 그래서 소제목마다 빈 인용구가 늘어났었다.
+ *    커서를 인용구 안에 두면 뜨는 아래 토글 버튼이 올바른 경로다.
+ */
+const QUOTE_STYLE_TOGGLE: Record<QuoteStyle, string> = {
+  default: ".se-quotation-group-toggle-toolbar-button.se-quotation-default-toolbar-button",
+  line: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_line"]',
+  bubble: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_bubble"]',
+  underline: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_underline"]',
+  postit: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_postit"]',
+  corner: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_corner"]',
 };
 
 /**
@@ -349,10 +376,17 @@ async function applyStructuredFormats(
   if (targets.length === 0) return;
 
   let ok = 0;
+  let styled = 0;
+  const wantStyled = targets.filter(
+    (b) => b.kind === "quote" && b.quoteStyle && b.quoteStyle !== "default",
+  ).length;
   for (const b of targets) {
     const text = stripListMarker(b.text.replace(/\n/g, " ").trim());
     try {
-      const para = frame.locator(".se-text-paragraph", { hasText: text }).first();
+      // 마무리 인용구는 제목을 되풀이하므로 본문 CTA 문단과 글자가 겹친다.
+      // 문서 맨 뒤에 있는 쪽을 잡아야 엉뚱한 줄을 건드리지 않는다.
+      const matches = frame.locator(".se-text-paragraph", { hasText: text });
+      const para = b.closing ? matches.last() : matches.first();
       if (!(await para.isVisible({ timeout: 4000 }).catch(() => false))) {
         log.warn(`서식 대상 줄을 찾지 못함: "${text.slice(0, 18)}"`);
         continue;
@@ -367,15 +401,51 @@ async function applyStructuredFormats(
         .click({ timeout: 5000 });
       await frame.waitForTimeout(500);
 
-      // 인용구 스타일(버티컬라인 등)은 변환 뒤 best-effort로 맞춘다
+      // 인용구 스타일(버티컬라인 등) — 문단서식으로 변환하면 항상 '인용구 1'(따옴표)이 되므로
+      // 변환된 블록 안에 커서를 두고, 그때 뜨는 속성 툴바에서 모양을 바꾼다.
       if (b.kind === "quote" && b.quoteStyle && b.quoteStyle !== "default") {
+        const label = `${b.quoteStyle} · "${text.slice(0, 14)}"`;
+        // ① 인용구 안에 커서 두기 — 떠 있는 속성 툴바에 가려 일반 클릭이 막히는 자리가 있어
+        //    한 번 실패하면 화면에 끌어온 뒤 force로 다시 누른다.
+        const quoted = frame.locator(".se-quotation .se-text-paragraph", { hasText: text });
+        const target = b.closing ? quoted.last() : quoted.first();
+        let placed = false;
         try {
-          await frame.locator(SEL.quotationStyleOpen).first().click({ timeout: 3500 });
-          await frame.waitForTimeout(350);
-          await frame.locator(QUOTE_STYLE_BUTTON[b.quoteStyle]).first().click({ timeout: 3500 });
-          await frame.waitForTimeout(400);
+          await target.scrollIntoViewIfNeeded({ timeout: 2500 });
+          await target.click({ timeout: 2500 });
+          placed = true;
         } catch {
-          /* 스타일은 못 맞춰도 인용구 자체는 적용됨 */
+          try {
+            await target.click({ timeout: 2500, force: true });
+            placed = true;
+          } catch (err) {
+            log.warn(`인용구 스타일 — 블록에 커서를 못 놓음: ${label}`, err);
+          }
+        }
+        // ② 속성 툴바에서 모양 토글 (같은 클래스가 숨은 채로도 있어 보이는 것만 고른다)
+        if (placed) {
+          await frame.waitForTimeout(350);
+          try {
+            const btns = frame.locator(QUOTE_STYLE_TOGGLE[b.quoteStyle]);
+            const n = await btns.count();
+            let clicked = false;
+            for (let i = 0; i < n; i++) {
+              const one = btns.nth(i);
+              if (await one.isVisible().catch(() => false)) {
+                await one.click({ timeout: 2500 });
+                clicked = true;
+                break;
+              }
+            }
+            if (clicked) {
+              await frame.waitForTimeout(400);
+              styled++;
+            } else {
+              log.warn(`인용구 스타일 — 속성 툴바에 버튼이 안 뜸(${n}개 중 보이는 것 없음): ${label}`);
+            }
+          } catch (err) {
+            log.warn(`인용구 스타일 — 토글 클릭 실패: ${label}`, err);
+          }
         }
       }
 
@@ -406,12 +476,85 @@ async function applyStructuredFormats(
     }
   }
   const heads = targets.filter((t) => t.kind === "heading").length;
-  log.info(`문단 서식 적용 ${ok}/${targets.length} (소제목 ${heads} · 인용구 ${targets.length - heads})`);
+  log.info(
+    `문단 서식 적용 ${ok}/${targets.length} (소제목 ${heads} · 인용구 ${targets.length - heads})` +
+      (wantStyled > 0 ? ` · 인용구 스타일 ${styled}/${wantStyled}` : ""),
+  );
 }
 
 /**
- * 이미지 그룹 삽입 — 사진 버튼 클릭 시 뜨는 파일선택창에 여러 파일 주입.
- * 2장을 한 번에 넣으면 SmartEditor가 나란히 그리드로 배치한다.
+ * 발행 패널에서 카테고리를 고른다.
+ *
+ * 카테고리를 지정하지 않으면 블로그 기본값('대문')으로 들어가 주제 분류가 안 되고
+ * 검색 노출에도 불리하다.
+ *
+ * 각 항목의 label[for]가 "{카테고리번호}_{이름}" 형태라 이름으로 정확히 집을 수 있다.
+ * 하위 카테고리는 화면 텍스트 앞에 "하위 카테고리"라는 스크린리더용 문구가 붙어서
+ * 텍스트 매칭은 어긋난다 — 그래서 for 속성을 우선 쓴다.
+ * 실패해도 발행 자체는 막지 않는다(경고만 남긴다).
+ */
+async function selectCategory(frame: Frame, name?: string): Promise<void> {
+  const wanted = name?.trim();
+  if (!wanted) return;
+  try {
+    let opened = false;
+    for (const sel of SEL.categoryOpen) {
+      const btn = frame.locator(sel).first();
+      if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await btn.click();
+        opened = true;
+        break;
+      }
+    }
+    if (!opened) {
+      log.warn(`카테고리 "${wanted}" — 선택 버튼을 찾지 못해 기본 카테고리로 발행합니다.`);
+      return;
+    }
+    await frame.waitForTimeout(800);
+
+    const menu = frame.locator(SEL.categoryMenu).first();
+    // 1순위: for="번호_이름" 정확 매칭 (같은 이름이 여러 개면 첫 번째)
+    const byFor = menu.locator(`label[for$="_${cssEscape(wanted)}"]`).first();
+    if (await byFor.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await byFor.click();
+      await frame.waitForTimeout(500);
+      log.info(`카테고리 지정: ${wanted}`);
+      return;
+    }
+    // 2순위: 보이는 글자로 매칭 ("하위 카테고리" 안내문은 무시)
+    const byText = menu.locator("label").filter({ hasText: wanted }).first();
+    if (await byText.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await byText.click();
+      await frame.waitForTimeout(500);
+      log.info(`카테고리 지정: ${wanted} (이름 매칭)`);
+      return;
+    }
+
+    const available = await menu
+      .locator("label")
+      .allInnerTexts()
+      .catch(() => [] as string[]);
+    log.warn(
+      `카테고리 "${wanted}"를 목록에서 찾지 못했습니다 — 기본 카테고리로 발행합니다. 블로그에 있는 이름: ${available
+        .map((t) => t.replace("하위 카테고리", "").trim())
+        .filter(Boolean)
+        .slice(0, 15)
+        .join(" · ")}`,
+    );
+  } catch (err) {
+    log.warn(`카테고리 "${wanted}" 지정 실패(무시)`, err);
+  }
+}
+
+/** 속성 셀렉터 값에 들어갈 따옴표·역슬래시 이스케이프 */
+function cssEscape(s: string): string {
+  return s.replace(/["\\]/g, "\\$&");
+}
+
+/**
+ * 이미지 삽입 — 사진 버튼 클릭 시 뜨는 파일선택창에 파일 주입.
+ * 본문 사진은 1장씩 단독으로 넣는다(모바일에서 크게 보이도록).
+ * 2장 이상을 한 번에 넘기면 SmartEditor가 콜라주로 배치하는 경로도 남겨 둔다.
  */
 async function insertImageGroup(
   page: Page,
@@ -452,6 +595,15 @@ async function insertImageGroup(
         await frame.waitForTimeout(400);
       } catch (err) {
         log.warn("이미지 가운데 정렬 실패(무시)", err);
+      }
+      // ⚠️ 정렬하려고 이미지를 클릭하면 '이미지 선택' 상태가 남아 글자 툴바가 사라진다.
+      //    그대로 두면 뒤따르는 글자크기·정렬 설정이 전부 3초씩 타임아웃된다.
+      //    실측(2026-08): Escape는 안 먹고 ArrowDown이 선택을 풀어 글자 툴바를 되살린다.
+      try {
+        await page.keyboard.press("ArrowDown");
+        await frame.waitForTimeout(300);
+      } catch {
+        /* 무시 */
       }
     }
     log.debug(`이미지 그룹 삽입: ${paths.length}장`);
@@ -541,22 +693,59 @@ export async function publishPost(
             .filter(Boolean)
             .map((text) => ({ kind: "text" as const, text }));
 
-    // 이미지를 2장씩 묶어 그리드 그룹으로
+    // 사진은 2장씩 묶어 콜라주(그리드)로 넣는다 — 학습 블로그와 같은 배치.
+    // 낱장으로 흩으면 글이 늘어지고 사진끼리 짝이 안 맞는다.
     const groups: string[][] = [];
     for (let i = 0; i < input.images.length; i += 2) {
       groups.push(input.images.slice(i, i + 2).map((a) => a.path));
     }
-    // 학습 블로그 구조: [소제목 → 사진 2장 → 본문]. 소제목이 있으면 그 바로 뒤에 사진을 넣는다.
-    const headingCount = bodyBlocks.filter((b) => b.kind !== "text").length;
-    const afterHeading = headingCount > 0 && groups.length > 0;
-    const every = !afterHeading && groups.length
-      ? Math.max(1, Math.floor(bodyBlocks.length / (groups.length + 1)))
-      : 0;
+    // 학습 블로그 구조: [소제목 → 사진 → 본문]. 소제목 뒤에 먼저 한 장씩 넣고,
+    // 소제목보다 사진이 많으면 남는 사진을 본문 문단 사이에 고르게 흩는다.
+    // (예전엔 남는 사진을 전부 글 끝에 몰아넣어 마지막에 사진 뭉치가 생겼다)
+    const slots: number[] = []; // 이 인덱스의 블록 뒤에 사진을 넣는다
+    const headingIdx = bodyBlocks
+      .map((b, i) => (b.kind !== "text" && !b.closing ? i : -1))
+      .filter((i) => i >= 0);
+    for (const i of headingIdx) {
+      if (slots.length >= groups.length) break;
+      slots.push(i);
+    }
+    if (slots.length < groups.length) {
+      // 마무리 인용구 앞까지의 본문 문단 중 아직 안 쓴 자리에 균등 배치
+      const lastBody = bodyBlocks.findIndex((b) => b.closing);
+      const limit = lastBody >= 0 ? lastBody : bodyBlocks.length;
+      const free = bodyBlocks
+        .map((b, i) => (b.kind === "text" && i < limit - 1 && !slots.includes(i) ? i : -1))
+        .filter((i) => i >= 0);
+      const need = groups.length - slots.length;
+      const step = free.length > need ? free.length / need : 1;
+      for (let k = 0; k < need && free.length > 0; k++) {
+        const pick = free[Math.min(free.length - 1, Math.floor(k * step))];
+        if (pick !== undefined && !slots.includes(pick)) slots.push(pick);
+      }
+    }
+    const slotSet = new Set(slots);
+    const afterHeading = slots.length > 0;
     let gi = 0;
+
+    /** 이 문단 다음에 '자주 묻는 질문'이 시작되는가 — 사양표를 그 앞에 끼운다 */
+    const faqStart = bodyBlocks.findIndex(
+      (b) => b.kind !== "text" && /질문|궁금|문의|FAQ/i.test(b.text),
+    );
+    let specDone = !input.specImage;
 
     for (let bi = 0; bi < bodyBlocks.length; bi++) {
       if (shouldStop()) return STOPPED;
       const blk = bodyBlocks[bi]!;
+
+      // 제품사양 표 — '자주 묻는 질문' 소제목 바로 앞에 단독으로
+      if (!specDone && input.specImage && bi === faqStart) {
+        await insertImageGroup(page, frame, [input.specImage.path], { center: true });
+        await page.keyboard.press("Enter");
+        await applyFormat(frame, input.textStyle?.bodySize ?? "fs19");
+        specDone = true;
+        log.info("제품사양 표 삽입 (자주 묻는 질문 앞)");
+      }
 
       // 소제목·인용구도 일단 평범한 문단으로 입력한다 (서식은 맨 마지막에 일괄 적용)
       const lines = blk.text.split("\n");
@@ -566,10 +755,8 @@ export async function publishPost(
         await page.keyboard.type(stripListMarker(lines[li]!), { delay: 6 });
         if (li < lines.length - 1) await page.keyboard.press("Shift+Enter"); // 문단 내 줄바꿈
       }
-      // 소제목 바로 다음에 사진 2장 (원본 구조 재현)
-      const putImages = afterHeading
-        ? blk.kind !== "text" && gi < groups.length
-        : Boolean(every) && gi < groups.length && (bi + 1) % every === 0;
+      // 미리 정한 자리에서만 사진을 넣는다 (원본 구조 재현)
+      const putImages = afterHeading && slotSet.has(bi) && gi < groups.length;
 
       await page.keyboard.press("Enter");
       // 사진이 바로 뒤에 올 땐 빈 줄을 넣지 않는다 (소제목 → 사진 사이 공백 제거)
@@ -583,6 +770,12 @@ export async function publishPost(
     }
     while (gi < groups.length) {
       await insertImageGroup(page, frame, groups[gi++]!);
+    }
+    // 자주 묻는 질문 소제목을 못 찾았으면 본문 끝에라도 사양표를 넣는다
+    if (!specDone && input.specImage) {
+      await insertImageGroup(page, frame, [input.specImage.path], { center: true });
+      await applyFormat(frame, input.textStyle?.bodySize ?? "fs19");
+      log.info("제품사양 표 삽입 (본문 끝)");
     }
 
     // 4) 서명 (학습 블로그의 반복되는 마지막 블록) — 순서대로 그대로 복사
@@ -646,6 +839,9 @@ export async function publishPost(
     log.info("발행 패널 열기");
     await robustClick(frame.locator(SEL.publishOpen).first(), "발행 패널 열기");
     await humanDelay(1.5, 2.5);
+
+    // 4-0) 카테고리 (지정했을 때만 — 실패해도 발행은 계속한다)
+    await selectCategory(frame, input.category);
 
     // 4-1) 공개 범위 — label을 클릭(라디오 input은 label에 가려 클릭 불가)하고,
     //      input의 checked로 실제 반영을 검증. 실패 시 발행 중단(공개 사고 방지).

@@ -1,6 +1,6 @@
 {
   "name": "senbi-auto",
-  "version": "0.1.4",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "description": "네이버 블로그 자동 포스팅·발행·이웃관리 데스크톱 앱 (senbiPost 생성 파이프라인 기반)",
@@ -31,13 +31,11 @@
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "fastify": "^5.2.1",
-    "node-cron": "^3.0.3",
     "playwright": "^1.50.1",
     "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
-    "@types/node-cron": "^3.0.11",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.24.2",

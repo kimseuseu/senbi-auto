@@ -307,8 +307,8 @@
         <div class="stat"><span>서로이웃 신청</span><b id="stBuddy">0 / 0</b></div>
       </div>
       <div>
-        <div class="stat"><span>글 스케줄</span><b id="stPostSched">-</b></div>
-        <div class="stat"><span>이웃 스케줄</span><b id="stNbSched">-</b></div>
+        <div class="stat"><span>자동 발행</span><b id="stAutoPublish">-</b></div>
+        <div class="stat"><span>이웃 관리</span><b id="stNbEnabled">-</b></div>
         <div class="stat"><span>최근 발행</span><b id="stPublished">0건</b></div>
       </div>
     </div>
@@ -379,10 +379,11 @@
       <div class="check"><input type="checkbox" id="src_crawl" /> <span>크롤 이미지 + 약한 필터</span></div>
       <div class="check"><input type="checkbox" id="src_myFolder" /> <span>내 이미지 폴더 (~/.senbi-auto/my-images)</span></div>
       <div class="row">
-        <div><label>글 발행 스케줄 (cron)</label><input type="text" id="postSchedule" placeholder="0 9 * * *" /></div>
         <div><label>1회 실행 글 수</label><input type="number" id="postsPerRun" min="1" max="10" /></div>
       </div>
       <div class="check"><input type="checkbox" id="autoPublish" /> <span><b>자동 발행</b> (끄면 초안만 생성)</span></div>
+      <label>발행 카테고리 (블로그에 있는 카테고리 이름 그대로 · 비우면 기본 카테고리)</label>
+      <input type="text" id="postCategory" placeholder="예: 공기청정,제습기,배풍기" />
       <label>자동 발행 공개 범위</label>
       <select id="postVisibility">
         <option value="private">비공개 (나만 — 테스트용)</option>
@@ -397,8 +398,6 @@
     <div class="card">
       <h2>이웃 관리 설정</h2>
       <div class="check"><input type="checkbox" id="nb_enabled" /> <span><b>이웃 관리 사용</b></span></div>
-      <label>이웃 관리 스케줄 (cron)</label>
-      <input type="text" id="nb_schedule" placeholder="0 10,15,20 * * *" />
       <div class="row">
         <div><label>일일 공감 한도</label><input type="number" id="nb_like" min="0" max="200" /></div>
         <div><label>일일 댓글 한도</label><input type="number" id="nb_comment" min="0" max="100" /></div>
@@ -491,12 +490,12 @@ async function loadSettings(){
   $("filterStrength").value=s.filterStrength??0.2;
   $("src_crawl").checked=(s.imageSources||[]).includes("crawl");
   $("src_myFolder").checked=(s.imageSources||[]).includes("myFolder");
-  $("postSchedule").value=s.postSchedule||""; $("postsPerRun").value=s.postsPerRun??1;
+  $("postsPerRun").value=s.postsPerRun??1;
   $("autoPublish").checked=!!s.autoPublish; $("pubWarn").style.display=s.autoPublish?"block":"none";
-  $("postVisibility").value=s.postVisibility||"private";
+  $("postVisibility").value=s.postVisibility||"private"; $("postCategory").value=s.postCategory||"";
   $("model").value=s.model||"claude-opus-4-8";
   const n=s.neighbor||{};
-  $("nb_enabled").checked=!!n.enabled; $("nb_schedule").value=n.schedule||"";
+  $("nb_enabled").checked=!!n.enabled;
   $("nb_like").value=n.dailyLikeLimit??50; $("nb_comment").value=n.dailyCommentLimit??20;
   $("nb_min").value=n.minDelaySec??8; $("nb_max").value=n.maxDelaySec??25;
   $("nb_buddy").checked=!!n.buddyRequestEnabled; $("nb_buddyKw").value=(n.buddyTopicKeywords||[]).join(", ");
@@ -512,10 +511,11 @@ function collect(){
     topicKeywords:csv($("topicKeywords").value), postType:$("postType").value,
     crawlCount:+$("crawlCount").value, lineWidth:+$("lineWidth").value,
     imagesPerPost:+$("imagesPerPost").value, filterStrength:+$("filterStrength").value,
-    imageSources:src, postSchedule:$("postSchedule").value.trim(), postsPerRun:+$("postsPerRun").value,
-    autoPublish:$("autoPublish").checked, postVisibility:$("postVisibility").value, model:$("model").value,
+    imageSources:src, postsPerRun:+$("postsPerRun").value,
+    autoPublish:$("autoPublish").checked, postVisibility:$("postVisibility").value,
+    postCategory:$("postCategory").value.trim(), model:$("model").value,
     neighbor:{
-      enabled:$("nb_enabled").checked, schedule:$("nb_schedule").value.trim(),
+      enabled:$("nb_enabled").checked,
       dailyLikeLimit:+$("nb_like").value, dailyCommentLimit:+$("nb_comment").value,
       minDelaySec:+$("nb_min").value, maxDelaySec:+$("nb_max").value,
       buddyRequestEnabled:$("nb_buddy").checked, buddyTopicKeywords:csv($("nb_buddyKw").value),
@@ -587,7 +587,7 @@ async function loadStatus(){
   $("stLikes").textContent=`${s.today.likes} / ${s.limits.likes}`;
   $("stComments").textContent=`${s.today.comments} / ${s.limits.comments}`;
   $("stBuddy").textContent=`${s.today.buddyRequests} / ${s.limits.buddyRequests}`;
-  $("stPostSched").textContent=s.postSchedule||"-"; $("stNbSched").textContent=s.neighborSchedule||"-";
+  $("stAutoPublish").textContent=s.autoPublish?"켜짐":"꺼짐 (초안만)"; $("stNbEnabled").textContent=s.neighborEnabled?"사용":"미사용";
   $("stPublished").textContent=(s.published?.length||0)+"건";
   // 메인 뷰
   $("mLikes").textContent=s.today.likes; $("mComments").textContent=s.today.comments;
@@ -734,6 +734,7 @@ function collectAcct(node){
   return {
     templateId:g("templateId").value,
     postVisibility:g("postVisibility").value,
+    postCategory:g("postCategory").value.trim(),
     topicKeywords:g("topicKeywords").value.split(",").map(x=>x.trim()).filter(Boolean),
     autoKeyword:g("autoKeyword").checked,
     postsPerRun:+g("postsPerRun").value||1,
@@ -766,6 +767,8 @@ function renderAccounts(){
           <div><label>학습 템플릿</label><select data-f="templateId">${tplOptions(a.templateId)}</select></div>
           <div><label>공개 범위</label><select data-f="postVisibility">${visOptions(a.postVisibility)}</select></div>
         </div>
+        <label>발행 카테고리 (블로그에 있는 카테고리 이름 그대로 · 비우면 기본 카테고리)</label>
+        <input type="text" data-f="postCategory" value="${escapeHtml(a.postCategory||"")}" placeholder="예: 공기청정,제습기,배풍기" />
         <div class="check"><input type="checkbox" data-f="autoKeyword"${a.autoKeyword!==false?' checked':''}> <span><b>주제 자동 선정</b> — 이 블로그 최근 20개 글을 보고 안 겹치는 새 주제를 AI가 정함</span></div>
         <label>주제 키워드 (쉼표 · 자동 선정이 꺼져 있거나 실패할 때 사용)</label>
         <textarea data-f="topicKeywords">${escapeHtml((a.topicKeywords||[]).join(", "))}</textarea>

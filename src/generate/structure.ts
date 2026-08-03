@@ -16,50 +16,74 @@ export interface TextStyleProfile {
   introBold: boolean;
 }
 
-/** 최빈값 뽑기 */
-function dominant(values: (string | undefined)[]): string | undefined {
+/**
+ * 최근 글일수록 큰 가중치.
+ *
+ * 왜 필요한가: 블로그는 시간이 지나며 서식을 바꾼다. 20건을 똑같이 세면
+ * 과거에 쓰던 서식이 최근 서식을 이겨버려, 지금 블로그와 다른 모양으로 글이 올라간다.
+ * (실측: 소제목 14건 vs 인용구 6건이라 옛 소제목이 뽑혔지만 최근 글은 전부 인용구였다)
+ * posts 배열은 최신순이라는 전제 — 크롤러·RSS 모두 최신순으로 준다.
+ */
+export function recencyWeight(index: number): number {
+  return 1 / (1 + index * 0.45);
+}
+
+/** 가중 최빈값 뽑기 */
+function dominant(values: { value?: string; weight: number }[]): string | undefined {
   const bag = new Map<string, number>();
-  for (const v of values) if (v) bag.set(v, (bag.get(v) ?? 0) + 1);
+  for (const v of values) if (v.value) bag.set(v.value, (bag.get(v.value) ?? 0) + v.weight);
   let best: string | undefined;
   let n = 0;
   for (const [k, c] of bag) if (c > n) ((n = c), (best = k));
   return best;
 }
 
-/** 학습 글들에서 본문·소제목의 글자 서식을 학습한다 */
+type Weighted = { style: BlockStyle; weight: number };
+
+/** 학습 글들에서 본문·소제목의 글자 서식을 학습한다 (최근 글 가중) */
 export function analyzeTextStyle(posts: CrawledPost[]): TextStyleProfile {
-  const bodyStyles: BlockStyle[] = [];
-  const headStyles: BlockStyle[] = [];
-  const quoteStyles: BlockStyle[] = [];
-  for (const p of posts) {
+  const bodyStyles: Weighted[] = [];
+  const headStyles: Weighted[] = [];
+  const quoteStyles: Weighted[] = [];
+  posts.forEach((p, i) => {
+    const weight = recencyWeight(i);
     for (const b of p.blocks) {
-      if (b.type === "text" && b.style) bodyStyles.push(b.style);
-      else if (b.type === "heading" && b.style) headStyles.push(b.style);
-      else if (b.type === "quote" && b.textStyle) quoteStyles.push(b.textStyle);
+      if (b.type === "text" && b.style) bodyStyles.push({ style: b.style, weight });
+      else if (b.type === "heading" && b.style) headStyles.push({ style: b.style, weight });
+      else if (b.type === "quote" && b.textStyle) quoteStyles.push({ style: b.textStyle, weight });
     }
-  }
-  const majority = (arr: BlockStyle[], pick: (s: BlockStyle) => boolean | undefined) =>
-    arr.length > 0 && arr.filter(pick).length > arr.length / 2;
+  });
+  // 가중치 합의 과반이면 '그렇다'로 본다
+  const majority = (arr: Weighted[], pick: (s: BlockStyle) => boolean | undefined) => {
+    const total = arr.reduce((n, w) => n + w.weight, 0);
+    if (total === 0) return false;
+    const hit = arr.reduce((n, w) => n + (pick(w.style) ? w.weight : 0), 0);
+    return hit > total / 2;
+  };
+  const pickField = (arr: Weighted[], f: (s: BlockStyle) => string | undefined) =>
+    dominant(arr.map((w) => ({ value: f(w.style), weight: w.weight })));
 
   // 인사말 = 각 글의 첫 텍스트 블록
-  const intros: BlockStyle[] = [];
-  for (const p of posts) {
+  const intros: Weighted[] = [];
+  posts.forEach((p, i) => {
     const first = p.blocks.find((b) => b.type === "text");
-    if (first && first.type === "text" && first.style) intros.push(first.style);
-  }
+    if (first && first.type === "text" && first.style) {
+      intros.push({ style: first.style, weight: recencyWeight(i) });
+    }
+  });
 
   return {
-    introColor: dominant(intros.map((s) => s.color)),
+    introColor: pickField(intros, (s) => s.color),
     introBold: majority(intros, (s) => s.bold),
-    bodyFont: dominant(bodyStyles.map((s) => s.font)),
-    bodySize: dominant(bodyStyles.map((s) => s.size)),
-    bodyColor: dominant(bodyStyles.map((s) => s.color)),
+    bodyFont: pickField(bodyStyles, (s) => s.font),
+    bodySize: pickField(bodyStyles, (s) => s.size),
+    bodyColor: pickField(bodyStyles, (s) => s.color),
     headingBold: majority(headStyles, (s) => s.bold),
     headingItalic: majority(headStyles, (s) => s.italic),
-    headingSize: dominant(headStyles.map((s) => s.size)),
+    headingSize: pickField(headStyles, (s) => s.size),
     quoteBold: majority(quoteStyles, (s) => s.bold),
     quoteItalic: majority(quoteStyles, (s) => s.italic),
-    quoteSize: dominant(quoteStyles.map((s) => s.size)),
+    quoteSize: pickField(quoteStyles, (s) => s.size),
   };
 }
 
@@ -68,34 +92,75 @@ export interface HeadingStyleProfile {
   style: "heading" | "quote"; // 소제목 vs 인용구 (더 많이 쓴 쪽)
   quoteStyle: QuoteStyle; // style==="quote"일 때의 인용구 스타일
   usesStructure: boolean; // 학습 블로그가 소제목/인용구를 실제로 쓰는지
+  /** 글 끝에 제목을 인용구로 한 번 더 넣는 습관이 있는지 + 그때 쓰는 스타일 */
+  closingQuote?: { use: boolean; style: QuoteStyle };
 }
 
-/** 학습 글들의 블록에서 지배적 섹션-제목 스타일을 판별한다. */
+/** 제목과 마무리 인용구가 같은 글인지 — 앞부분이 겹치면 같은 문구로 본다 */
+function repeatsTitle(quoteText: string, title: string): boolean {
+  const a = normalize(quoteText);
+  const b = normalize(title);
+  if (a.length < 8 || b.length < 8) return false;
+  const head = b.slice(0, Math.min(12, b.length));
+  return a.includes(head) || b.includes(a.slice(0, Math.min(12, a.length)));
+}
+
+/** 학습 글들의 블록에서 지배적 섹션-제목 스타일을 판별한다 (최근 글 가중). */
 export function analyzeHeadingStyle(posts: CrawledPost[]): HeadingStyleProfile {
-  let headingCount = 0;
-  let quoteCount = 0;
-  const quoteStyleCount: Partial<Record<QuoteStyle, number>> = {};
-  for (const p of posts) {
+  let headingScore = 0;
+  let quoteScore = 0;
+  let blockTotal = 0;
+  const quoteStyleScore: Partial<Record<QuoteStyle, number>> = {};
+
+  // 마무리 인용구(제목 반복) 습관 집계
+  let closingHit = 0;
+  let closingTotal = 0;
+  const closingStyleScore: Partial<Record<QuoteStyle, number>> = {};
+
+  posts.forEach((p, i) => {
+    const w = recencyWeight(i);
+    const quotes: { text: string; style: QuoteStyle }[] = [];
     for (const b of p.blocks) {
-      if (b.type === "heading") headingCount++;
-      else if (b.type === "quote") {
-        quoteCount++;
-        quoteStyleCount[b.style] = (quoteStyleCount[b.style] ?? 0) + 1;
+      if (b.type === "heading") {
+        headingScore += w;
+        blockTotal++;
+      } else if (b.type === "quote") {
+        quoteScore += w;
+        blockTotal++;
+        quoteStyleScore[b.style] = (quoteStyleScore[b.style] ?? 0) + w;
+        quotes.push({ text: b.text, style: b.style });
       }
     }
-  }
-  let quoteStyle: QuoteStyle = "line";
-  let best = 0;
-  for (const [s, n] of Object.entries(quoteStyleCount)) {
-    if ((n ?? 0) > best) {
-      best = n ?? 0;
-      quoteStyle = s as QuoteStyle;
+    // 이 글의 마지막 인용구가 제목을 되풀이하는가
+    closingTotal += w;
+    const last = quotes[quotes.length - 1];
+    if (last && repeatsTitle(last.text, p.title)) {
+      closingHit += w;
+      closingStyleScore[last.style] = (closingStyleScore[last.style] ?? 0) + w;
     }
-  }
+  });
+
+  const topStyle = (bag: Partial<Record<QuoteStyle, number>>, fallback: QuoteStyle): QuoteStyle => {
+    let best = 0;
+    let out: QuoteStyle = fallback;
+    for (const [s, n] of Object.entries(bag)) {
+      if ((n ?? 0) > best) {
+        best = n ?? 0;
+        out = s as QuoteStyle;
+      }
+    }
+    return out;
+  };
+
   return {
-    style: quoteCount > headingCount ? "quote" : "heading",
-    quoteStyle,
-    usesStructure: headingCount + quoteCount >= 2,
+    style: quoteScore > headingScore ? "quote" : "heading",
+    quoteStyle: topStyle(quoteStyleScore, "line"),
+    usesStructure: blockTotal >= 2,
+    closingQuote: {
+      // 학습 글 절반 이상이 제목을 인용구로 되풀이하면 우리도 그렇게 쓴다
+      use: closingTotal > 0 && closingHit > closingTotal / 2,
+      style: topStyle(closingStyleScore, "default"),
+    },
   };
 }
 
@@ -104,6 +169,8 @@ export interface BodyBlock {
   kind: "text" | "heading" | "quote";
   text: string; // text=줄바꿈 적용본, heading/quote=제목 문구(한 줄)
   quoteStyle?: QuoteStyle;
+  /** 글 끝 마무리 인용구 — 섹션 제목이 아니므로 사진을 뒤에 붙이지 않는다 */
+  closing?: boolean;
 }
 
 function normalize(s: string): string {
@@ -119,6 +186,8 @@ export function buildStructuredBody(
   content: string,
   headings: string[],
   profile: HeadingStyleProfile,
+  /** 있으면 글 끝에 제목을 인용구로 한 번 더 넣는다 (학습 블로그 습관일 때만) */
+  title?: string,
 ): BodyBlock[] {
   const headingNorms = new Set(headings.map(normalize).filter(Boolean));
   const paragraphs = content
@@ -137,6 +206,16 @@ export function buildStructuredBody(
     } else {
       blocks.push({ kind: "text", text: para });
     }
+  }
+
+  // 마무리 인용구 — 학습 블로그가 글 끝에 제목을 되풀이하는 습관이 있을 때만
+  if (profile.closingQuote?.use && title?.trim()) {
+    blocks.push({
+      kind: "quote",
+      text: title.trim(),
+      quoteStyle: profile.closingQuote.style,
+      closing: true,
+    });
   }
   return blocks;
 }

@@ -43,7 +43,16 @@ export type PipelineStage =
   | "generate"
   | "validate"
   | "length"
+  | "originality"
   | "wrap";
+
+/** 참고글과 얼마나 겹치는지 (유사문서 게이트 결과) */
+export interface OverlapSummary {
+  ratio: number; // 겹치는 문장 비율 0~1
+  meanScore: number; // 문장별 최고 유사도 평균
+  totalSentences: number;
+  hits: { sentence: string; source: string; score: number }[];
+}
 
 export interface GenerateResult {
   title: string;
@@ -55,6 +64,10 @@ export interface GenerateResult {
   replacedWords: FilterHit[];
   remainingFilterWords: string[];
   usedReferences: string[];
+  /** 참고글과의 문장 겹침 검사 결과 */
+  overlap?: OverlapSummary;
+  /** 겹침이 허용치 이하인지 — false면 발행하지 않고 초안으로만 남긴다 */
+  overlapOk?: boolean;
   postType: PostType;
   mainKeyword?: string;
   subKeywords?: string[];

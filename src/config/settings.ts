@@ -32,10 +32,11 @@ export interface Settings {
   imagesPerPost: number; // 글당 삽입 이미지 수
   filterStrength: number; // 0(원본)~1(강함). 약하게 = 0.2 권장
 
-  // --- 발행 스케줄 ---
+  // --- 발행 ---
+  // 예약 실행은 없다. 사용자가 '오늘 작업 시작'을 누를 때만 돈다.
   autoPublish: boolean; // 생성 후 자동 발행 여부 (false면 로컬 초안만)
   postVisibility: Visibility; // 자동 발행 공개 범위 (all/neighbor/both/private)
-  postSchedule: string; // cron 표현식 (예: "0 9 * * *" 매일 09시)
+  postCategory: string; // 발행할 블로그 카테고리 이름 (비우면 블로그 기본값)
   postsPerRun: number; // 1회 실행 시 생성·발행할 글 수
 
   // --- 이웃 관리 ---
@@ -46,7 +47,6 @@ type PostTypeSetting = "info" | "review" | "product";
 
 export interface NeighborSettings {
   enabled: boolean;
-  schedule: string; // cron
   // 이웃 소통 (기존 이웃 블로그 방문 → 공감 + 댓글)
   dailyLikeLimit: number;
   dailyCommentLimit: number;
@@ -83,12 +83,11 @@ export const DEFAULT_SETTINGS: Settings = {
 
   autoPublish: false, // 안전 기본값: 처음엔 자동발행 끔
   postVisibility: "private", // 안전 기본값: 비공개 (테스트 후 전체공개로 변경)
-  postSchedule: "0 9 * * *",
+  postCategory: "",
   postsPerRun: 1,
 
   neighbor: {
     enabled: false,
-    schedule: "0 10,15,20 * * *",
     dailyLikeLimit: 50,
     dailyCommentLimit: 20,
     buddyRequestEnabled: false,
@@ -101,9 +100,24 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const store = new JsonStore<Settings>("settings", DEFAULT_SETTINGS);
 
+/**
+ * 예약 실행이 있던 시절의 cron 값(postSchedule / neighbor.schedule)을 걷어낸다.
+ * 이제 작업은 '오늘 작업 시작' 버튼으로만 도는데, 파일에 남아 있으면
+ * 아직 예약이 걸린 것처럼 보여 헷갈린다.
+ */
+function stripLegacySchedule<T extends object>(s: T): T {
+  const { postSchedule: _p, neighbor, ...rest } = s as T & {
+    postSchedule?: unknown;
+    neighbor?: Record<string, unknown>;
+  };
+  if (!neighbor) return rest as T;
+  const { schedule: _n, ...nb } = neighbor;
+  return { ...rest, neighbor: nb } as T;
+}
+
 /** 저장된 설정을 기본값과 병합해 반환 (필드 누락 방지) */
 export function getSettings(): Settings {
-  const saved = store.read();
+  const saved = stripLegacySchedule(store.read());
   return {
     ...DEFAULT_SETTINGS,
     ...saved,
@@ -112,11 +126,15 @@ export function getSettings(): Settings {
 }
 
 export function saveSettings(patch: Partial<Settings>): Settings {
-  return store.update((draft) => ({
-    ...draft,
-    ...patch,
-    neighbor: { ...draft.neighbor, ...(patch.neighbor ?? {}) },
-  }));
+  return store.update((draft) => {
+    const base = stripLegacySchedule(draft);
+    const next = stripLegacySchedule(patch);
+    return {
+      ...base,
+      ...next,
+      neighbor: { ...base.neighbor, ...(next.neighbor ?? {}) },
+    };
+  });
 }
 
 /** 실제로 사용할 API 키 (env 우선) */

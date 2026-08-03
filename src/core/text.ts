@@ -94,6 +94,22 @@ function wrapWords(words: string[], maxChars: number): string[] {
 }
 
 /**
+ * 자주 묻는 질문의 "Q." "A." 를 각각 독립 문단으로 떼어 놓는다.
+ *
+ * 모델이 질문 끝에 물음표를 빠뜨리면("…반납하나요 A. 굽는 망과…") 문장 경계를 못 찾아
+ * 질문과 답이 한 줄에 붙어버린다. 줄바꿈을 먹이기 전에 여기서 정리한다.
+ */
+export function splitFaqBlocks(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    // 줄 한가운데 나타난 Q./A. 앞을 문단 경계로
+    .replace(/([^\n])\s+(?=[QA]\.\s)/g, "$1\n\n")
+    // 이미 줄바꿈으로만 나뉜 Q./A. 도 빈 줄로 벌린다
+    .replace(/\n(?!\n)(?=[QA]\.\s)/g, "\n\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+/**
  * 네이버 블로그 모바일 가독성용 줄바꿈.
  * - 어절(공백) 중간은 절대 끊지 않고, 가능하면 조사·어미로 끝나는 자리에서 끊어 자연스럽게.
  * - 한 줄이 maxChars를 넘지 않도록 하되, 자연스러운 끊김을 우선한다.
@@ -106,11 +122,12 @@ export function wrapForMobile(text: string, maxChars = 20): string {
     .split(/\n{2,}/);
 
   const wrapped = paragraphs.map((paragraph) => {
-    // 문장 끝(. ! ? ~ …)에서 먼저 나눈다 — 문장이 바뀌는 자리가 가장 자연스러운 줄바꿈이다
+    // 문장 끝(. ! ? ~ …)에서 먼저 나눈다 — 문장이 바뀌는 자리가 가장 자연스러운 줄바꿈이다.
+    // 단 "Q." "A." 같은 자주 묻는 질문 표기 뒤에서는 나누지 않는다 (표기만 덩그러니 남는다)
     const sentences = paragraph
       .replace(/\s+/g, " ")
       .trim()
-      .split(/(?<=[.!?~…])\s+/)
+      .split(/(?<!(?:^|\s)[QA]\.)(?<=[.!?~…])\s+/)
       .map((s) => s.trim())
       .filter(Boolean);
 

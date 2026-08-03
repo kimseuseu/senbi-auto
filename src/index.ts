@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { ensureAppDirs } from "./config/paths";
-import { rescheduleAll, stopScheduler } from "./scheduler";
 import { startDashboard } from "./server/dashboard";
 import { prefetchChromium } from "./naver/browserSetup";
 import { preflight } from "./core/preflight";
@@ -14,7 +13,6 @@ async function main() {
 
   log.info("senbi-auto 데몬 시작");
   await preflight(); // 실행 환경 점검 (이미지 모듈 등)
-  rescheduleAll(); // 저장된 설정으로 스케줄 등록
   const bound = await startDashboard(port);
 
   log.info(`준비 완료 — 브라우저에서 http://localhost:${bound} 열기`);
@@ -23,7 +21,6 @@ async function main() {
 
 function shutdown() {
   log.info("종료 중...");
-  stopScheduler();
   process.exit(0);
 }
 process.on("SIGINT", shutdown);

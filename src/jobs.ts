@@ -1,4 +1,3 @@
-import cron, { type ScheduledTask } from "node-cron";
 import { getSettings } from "./config/settings";
 import { runPostJob, type PostJobResult } from "./run/postJob";
 import { runNeighborJob, type NeighborJobResult } from "./run/neighborJob";
@@ -9,24 +8,21 @@ import { createLogger } from "./core/logger";
 
 export { requestStop, shouldStop };
 
-const log = createLogger("scheduler");
-
-let postTask: ScheduledTask | null = null;
-let neighborTask: ScheduledTask | null = null;
+const log = createLogger("jobs");
 
 // 동시 실행 방지 (브라우저 세션은 하나만)
 let running = false;
 
 async function withLock(name: string, fn: () => Promise<void>): Promise<void> {
   if (running) {
-    log.warn(`${name}: 다른 작업 실행 중 — 이번 회차 건너뜀`);
+    log.warn(`${name}: 다른 작업 실행 중 — 이번 요청은 건너뜀`);
     return;
   }
   running = true;
   try {
     await fn();
   } catch (err) {
-    // 예약 실행 중 터진 예외는 여기서 잡지 않으면 조용히 사라진다 → 반드시 알림으로 남긴다
+    // 여기서 잡지 않으면 예외가 조용히 사라진다 → 반드시 알림으로 남긴다
     log.error(`${name}: 예기치 못한 오류로 중지`, err);
     alertJobFailure(name.startsWith("neighbor") ? "neighbor" : "post", err);
   } finally {
@@ -44,86 +40,10 @@ function noteNeighborResult(r: NeighborJobResult, target?: string): void {
   if (!r.ok) alertJobFailure("neighbor", r.error ?? "알 수 없는 오류", { target });
 }
 
-export function rescheduleAll(): void {
-  const s = getSettings();
-
-  postTask?.stop();
-  neighborTask?.stop();
-  postTask = null;
-  neighborTask = null;
-
-  // 글 발행 스케줄
-  if (s.postSchedule && cron.validate(s.postSchedule)) {
-    postTask = cron.schedule(
-      s.postSchedule,
-      () =>
-        withLock("postJob", async () => {
-          log.info("예약 실행: 글 생성/발행");
-          // 계정별로 각자의 세션·설정으로 실행 (계정 없으면 레거시 단일 설정)
-          const accounts = listAccounts();
-          if (accounts.length === 0) {
-            const runs = Math.max(1, s.postsPerRun);
-            for (let i = 0; i < runs; i++) {
-              const r = await runPostJob();
-              notePostResult(r);
-              log.info(`글 #${i + 1}: ${r.ok ? (r.published ? `발행 ${r.url ?? ""}` : "초안 저장") : `실패 ${r.error}`}`);
-            }
-          } else {
-            for (const acc of accounts) {
-              if (shouldStop()) break;
-              await runAccount(acc, true, []);
-            }
-          }
-        }),
-      { timezone: "Asia/Seoul" },
-    );
-    log.info(`글 스케줄 등록: ${s.postSchedule}`);
-  } else if (s.postSchedule) {
-    log.warn(`잘못된 글 cron 식: ${s.postSchedule}`);
-  }
-
-  // 이웃 관리 스케줄
-  if (s.neighbor.enabled && s.neighbor.schedule && cron.validate(s.neighbor.schedule)) {
-    neighborTask = cron.schedule(
-      s.neighbor.schedule,
-      () =>
-        withLock("neighborJob", async () => {
-          log.info("예약 실행: 이웃 관리");
-          const accounts = listAccounts().filter((a) => a.neighbor.enabled);
-          if (accounts.length === 0) {
-            const r = await runNeighborJob();
-            noteNeighborResult(r);
-            log.info(`이웃: ${r.ok ? `공감 ${r.likes} 댓글 ${r.comments} 서로이웃 ${r.buddyRequests}` : `실패 ${r.error}`}`);
-          } else {
-            for (const acc of accounts) {
-              if (shouldStop()) break;
-              const r = await runNeighborJob({
-                settings: resolveAccountSettings(acc),
-                accountId: acc.id,
-              });
-              noteNeighborResult(r, acc.name);
-              log.info(
-                `이웃(${acc.name}): ${r.ok ? `공감 ${r.likes} 댓글 ${r.comments} 서로이웃 ${r.buddyRequests}` : `실패 ${r.error}`}`,
-              );
-            }
-          }
-        }),
-      { timezone: "Asia/Seoul" },
-    );
-    log.info(`이웃 스케줄 등록: ${s.neighbor.schedule}`);
-  }
-}
-
-export function stopScheduler(): void {
-  postTask?.stop();
-  neighborTask?.stop();
-}
-
 export function isRunning(): boolean {
   return running;
 }
 
-/** 대시보드에서 수동 실행할 때도 락을 공유 */
 /**
  * 작업에 쓸 기본 계정 — 등록된 첫 계정.
  * ⚠️ 계정 세션(로그인됨) 대신 레거시 세션을 쓰면 네이버가 비로그인으로 취급해

@@ -3,7 +3,7 @@ import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSettings, saveSettings, resolveApiKey, type Settings } from "../config/settings";
-import { rescheduleAll, runPostNow, runNeighborNow, runAllNow, isRunning, requestStop, shouldStop } from "../scheduler";
+import { runPostNow, runNeighborNow, runAllNow, isRunning, requestStop, shouldStop } from "../jobs";
 import { listDrafts, getDraft } from "../core/drafts";
 import { listAlerts, unreadAlerts, markAlertsRead, clearAlerts } from "../core/alerts";
 import {
@@ -60,8 +60,7 @@ export async function startDashboard(port: number): Promise<number> {
     // 빈 API 키 문자열이면 기존 값 유지
     if (patch.anthropicApiKey === "") delete patch.anthropicApiKey;
     const saved = saveSettings(patch);
-    rescheduleAll();
-    log.info("설정 저장 + 스케줄 재적용");
+    log.info("설정 저장");
     return publicSettings(saved);
   });
 
@@ -74,8 +73,6 @@ export async function startDashboard(port: number): Promise<number> {
       apiKeyFromEnv: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
       autoPublish: s.autoPublish,
       neighborEnabled: s.neighbor.enabled,
-      postSchedule: s.postSchedule,
-      neighborSchedule: s.neighbor.schedule,
       today: {
         likes: todayCount("like"),
         comments: todayCount("comment"),
