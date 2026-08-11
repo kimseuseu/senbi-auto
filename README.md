@@ -38,6 +38,14 @@
 
 두 규칙은 발행 직전 `assertKeywordAllowed`에서 다시 검사하고, 어기면 **발행하지 않고 중단**한다. 동작 확인:
 
+**시작 전에 직접 고를 수도 있다.** `오늘 작업 시작` → 블로그를 고르면 **키워드 고르기** 화면이 뜬다. 여기에는
+
+- 그 블로그가 **최근에 쓴 메인키워드**가 최신순으로 (어떤 소재를 이미 썼는지 한눈에)
+- **학습 블로그에서 수집한 키워드** 중 아직 안 쓴 것들 (사진이 없는 소재는 `사진없음` 표시)
+- 위 둘을 다 반영한 **추천 키워드**와 그 근거
+
+가 함께 나온다. 글 수만큼 고르면 고른 순서대로 발행하고, 안 고르면 추천 키워드로 자동 진행한다. 화면에 보이는 후보·추천은 발행 잡과 **같은 코드**(`run/keywordPlan.ts`)로 계산하므로 실제로 쓰이는 것과 어긋나지 않는다. 직접 고른 키워드도 위 두 규칙 검사를 똑같이 통과해야 발행된다.
+
 ```bash
 npm run verify:keywords              # 설정된 학습 블로그 기준
 npm run verify:keywords -- <blogId>  # 특정 블로그로 확인
@@ -53,7 +61,7 @@ src/
   media/    images                              다운로드 + sharp 약한 필터   ✅검증
   generate/ pipeline·index·social               Claude 생성/검증 + 댓글·서로이웃 문구
   naver/    session·publish·neighbor            Playwright 세션·발행·이웃      ⚠️튜닝
-  run/      postJob·neighborJob                 오케스트레이션
+  run/      postJob·neighborJob·keywordPlan     오케스트레이션 + 키워드 후보·추천
   jobs.ts                                       수동 실행(원버튼) 오케스트레이션·동시실행 잠금
   server/   dashboard·public/index.html         Fastify + 로컬 대시보드      ✅검증
   index.ts                                      데몬 진입점

@@ -82,15 +82,27 @@ async function sleepMinutesInterruptible(minutes: number): Promise<void> {
   }
 }
 
-/** 계정 1개 처리: 글 발행(postsPerRun개, 텀 사이 대기) + (설정 시) 이웃 관리 */
-async function runAccount(acc: Account, headless: boolean, results: string[]): Promise<void> {
+/**
+ * 계정 1개 처리: 글 발행(postsPerRun개, 텀 사이 대기) + (설정 시) 이웃 관리.
+ * keywords — 화면에서 고른 키워드를 글 순서대로. 모자란 자리는 자동 선정한다.
+ */
+async function runAccount(
+  acc: Account,
+  headless: boolean,
+  results: string[],
+  keywords: string[] = [],
+): Promise<void> {
   const settings = resolveAccountSettings(acc);
   const runs = Math.max(1, acc.postsPerRun);
   log.info(`▶ 계정 "${acc.name}" (${acc.blogId}) 작업 시작 — 글 ${runs}편, 텀 ${acc.postIntervalMin}분`);
+  if (keywords.length > 0) {
+    log.info(`선택한 키워드: ${keywords.map((k, n) => `글${n + 1} "${k}"`).join(" · ")}`);
+  }
 
   for (let i = 0; i < runs; i++) {
     if (shouldStop()) return;
-    const r = await runPostJob({ headless, settings, accountId: acc.id });
+    const keyword = keywords[i]?.trim() || undefined;
+    const r = await runPostJob({ headless, settings, accountId: acc.id, keyword });
     notePostResult(r, acc.name);
     results.push(
       `${acc.name} 글${i + 1} ${r.ok ? (r.published ? "발행" : "초안") : `실패(${r.error})`}`,
@@ -116,9 +128,12 @@ async function runAccount(acc: Account, headless: boolean, results: string[]): P
  * 원버튼 — 오늘 작업 전부.
  * 선택된 계정들을 순차로(브라우저는 한 번에 하나) 처리한다.
  * accountIds 없으면 등록된 모든 계정. 계정이 하나도 없으면 레거시 단일 설정으로 폴백.
+ * keywords — 계정 id별로 화면에서 고른 키워드 (글 순서대로). 없으면 자동 선정.
  */
 export async function runAllNow(
-  arg: boolean | { headless?: boolean; accountIds?: string[] } = true,
+  arg:
+    | boolean
+    | { headless?: boolean; accountIds?: string[]; keywords?: Record<string, string[]> } = true,
 ): Promise<string> {
   const opts = typeof arg === "boolean" ? { headless: arg } : arg;
   const headless = opts.headless ?? true;
@@ -139,7 +154,7 @@ export async function runAllNow(
       }
       for (const acc of wanted) {
         if (shouldStop()) break;
-        await runAccount(acc, headless, results);
+        await runAccount(acc, headless, results, opts.keywords?.[acc.id] ?? []);
       }
     } else {
       // 레거시: 계정 미등록 상태 — 전역 설정으로 실행

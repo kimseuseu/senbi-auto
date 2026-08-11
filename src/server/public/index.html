@@ -216,9 +216,60 @@
   .goal-acct .ga-meta{font-size:12px;color:var(--muted);margin-top:2px}
   .goal-acct.off{opacity:.5}
   .goal-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 20px 18px;border-top:1px solid var(--line);flex-wrap:wrap}
-  .goal-est{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .goal-est{font-size:12.5px;color:var(--muted);line-height:1.5;flex:1;min-width:180px}
   .goal-est .over{color:var(--warn);font-weight:600}
   .goal-start{padding:13px 30px;font-size:15px}
+  #goalBack[hidden]{display:none}
+
+  /* ---------- 키워드 고르기 (2단계) ---------- */
+  #goalKwBody{max-height:58vh}
+  #goalKwBody[hidden]{display:none}
+  .step-in{animation:stepIn .26s cubic-bezier(.16,1,.3,1) both}
+  @keyframes stepIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .kw-acct{border:1px solid var(--line);border-radius:14px;background:var(--panel2);padding:14px 15px;margin:10px 0}
+  .kw-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .kw-head b{font-size:14.5px}
+  .kw-need{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .kw-need.done{color:var(--ok)}
+  .kw-sec{margin-top:14px}
+  .kw-label{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  /* 블로그 아이디는 대문자로 바꾸면 안 된다 — 실제 아이디는 소문자다 */
+  .kw-label .id{text-transform:none;letter-spacing:.02em}
+  /* 최근 발행 이력 — 세로 선으로 시간 흐름을 보여 준다 (위가 최신).
+     길어지면 이 목록 안에서만 스크롤한다 — 정작 골라야 할 키워드가 화면 밖으로 밀리지 않게. */
+  .kw-recent{border-left:1px solid var(--line);padding-left:13px;margin-left:2px;
+    max-height:126px;overflow-y:auto;overscroll-behavior:contain}
+  .kw-recent .r{display:flex;gap:10px;align-items:baseline;padding:4px 0;font-size:12.5px;position:relative}
+  .kw-recent .r::before{content:"";position:absolute;left:-17px;top:11px;width:5px;height:5px;border-radius:99px;background:#3a3a42}
+  .kw-recent .r:first-child::before{background:var(--text)}
+  .kw-recent .r .d{color:#5c5c63;font-variant-numeric:tabular-nums;flex:none;width:40px}
+  .kw-recent .r .k{color:var(--text);font-weight:600;flex:none;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kw-recent .r .t{color:#6c6c74;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kw-reco{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;flex-wrap:wrap;
+    border:1px solid rgba(57,217,138,.3);background:linear-gradient(180deg,rgba(57,217,138,.10),rgba(57,217,138,.03))}
+  .kw-reco .tag{font-size:11px;font-weight:700;color:var(--ok);letter-spacing:.07em;flex:none}
+  .kw-reco .name{font-size:14px;font-weight:600}
+  .kw-reco .why{font-size:12px;color:var(--muted);flex-basis:100%}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:13px;line-height:1;cursor:pointer;
+    padding:8px 13px;border-radius:99px;border:1px solid var(--line2);background:rgba(255,255,255,.04);color:var(--text);
+    transition:background .15s ease,border-color .15s ease,transform .1s ease}
+  .chip:hover{background:rgba(255,255,255,.1)}
+  .chip:active{transform:scale(.97)}
+  .chip.on{background:#fff;color:#0a0a0a;border-color:#fff;font-weight:600}
+  .chip .n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:99px;font-size:10.5px;font-weight:700;
+    background:#0a0a0a;color:#fff}
+  .chip .noimg{font-size:10.5px;color:var(--warn)}
+  .chip.on .noimg{color:#b06a00}
+  .kw-tip{font-size:11.5px;color:#5c5c63;margin-top:9px;line-height:1.5}
+  .kw-more{appearance:none;background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;padding:8px 0;font-family:inherit;
+    text-decoration:underline;text-underline-offset:3px}
+  .kw-more:hover{color:var(--text)}
+  .kw-blocked{font-size:12px;color:#5c5c63;line-height:1.7;margin-top:2px}
+  .kw-warn{font-size:12.5px;color:var(--warn);line-height:1.5;margin-top:8px}
+  .kw-loading{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:12.5px;padding:6px 0}
+  .kw-loading .spin{width:12px;height:12px;border-radius:99px;flex:none;
+    border:2px solid var(--line2);border-top-color:var(--text);animation:spin .7s linear infinite}
 
   /* ---------- 실시간 로그 ---------- */
   .loghead{display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:12.5px}
@@ -458,13 +509,15 @@
 <dialog id="goalModal">
   <div class="goal-sheet">
     <div class="goal-head">
-      <div><b>오늘 작업 목표</b><div class="muted" id="goalSub">작업할 블로그를 선택하세요</div></div>
+      <div><b id="goalTitle">오늘 작업 목표</b><div class="muted" id="goalSub">작업할 블로그를 선택하세요</div></div>
       <button class="btn tiny ghost" id="goalClose">닫기</button>
     </div>
     <div class="goal-body" id="goalBody"></div>
+    <div class="goal-body" id="goalKwBody" hidden></div>
     <div class="goal-foot">
+      <button class="btn tiny ghost" id="goalBack" hidden>← 블로그 다시 고르기</button>
       <div class="goal-est" id="goalEst"></div>
-      <span class="lgwrap"><button class="lg-btn goal-start" id="goalStart"><span>작업 시작</span></button></span>
+      <span class="lgwrap"><button class="lg-btn goal-start" id="goalStart"><span>다음: 키워드 고르기</span></button></span>
     </div>
   </div>
 </dialog>
@@ -662,7 +715,8 @@ async function loadDrafts(){
     $("dmTitle").textContent=x.title; $("dmBody").textContent=x.content; $("draftModal").showModal();
   });
 }
-function escapeHtml(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+// 따옴표까지 escape 한다 — 속성값 안에도 쓰이기 때문(data-kw, value 등). 안 하면 따옴표 든 키워드가 속성을 깨뜨린다.
+function escapeHtml(s){return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 
 // ---------- 템플릿 ----------
 let _templates=[];
@@ -844,6 +898,7 @@ function recalcGoal(){
   const done=new Date(Date.now()+total*60000);
   const over=done.getHours()>18 || (done.getHours()===18 && done.getMinutes()>0) || done.getHours()<6;
   est.innerHTML=`선택 ${sel.length}개 · 예상 소요 <b>~${total}분</b> · 완료 예상 <b class="${over?'over':''}">${fmtTime(done)}</b>`
+    +(_goalStep===2?`<br>${kwSummary(ids)}`:"")
     +(over?'<br><span class="over">⚠️ 오후 6시 퇴근 전 완료가 어려울 수 있어요. 글 수·발행 텀을 줄여 보세요.</span>':'');
 }
 function renderGoal(){
@@ -863,19 +918,189 @@ function renderGoal(){
   body.querySelectorAll("input[data-gid]").forEach(c=>c.onchange=recalcGoal);
   recalcGoal();
 }
-function openGoalModal(){ renderGoal(); const m=$("goalModal"); m.classList.remove("closing"); m.showModal(); }
+function openGoalModal(){ goToBlogStep(); renderGoal(); const m=$("goalModal"); m.classList.remove("closing"); m.showModal(); }
 function closeGoalModal(){ const m=$("goalModal"); m.classList.add("closing"); setTimeout(()=>{ m.close(); m.classList.remove("closing"); },200); }
 $("goalClose").onclick=closeGoalModal;
 $("goalModal").addEventListener("cancel",(e)=>{ e.preventDefault(); closeGoalModal(); });
+
+// ---------- 2단계: 이 회차에 쓸 키워드 고르기 ----------
+// 후보·추천은 서버가 발행 잡과 같은 코드로 계산한다 (여기 보이는 게 실제로 쓰이는 것)
+let _goalStep=1;
+let _plans={};   // accountId → 서버가 준 키워드 플랜
+let _picks={};   // accountId → 고른 키워드 배열 (글 순서)
+
+function planNeed(id){ const a=_accounts.find(x=>x.id===id); return Math.max(1, (a&&a.postsPerRun)||1); }
+function kwSummary(ids){
+  const parts=ids.map(id=>{
+    const n=(_picks[id]||[]).length, need=planNeed(id);
+    const nm=(_accounts.find(a=>a.id===id)||{}).name||"";
+    return `${escapeHtml(nm)} ${n}/${need}`;
+  });
+  const auto=ids.reduce((s,id)=>s+Math.max(0,planNeed(id)-(_picks[id]||[]).length),0);
+  return `키워드 ${parts.join(" · ")}${auto?` <span class="over">· ${auto}편은 자동 선정</span>`:""}`;
+}
+
+function goToBlogStep(){
+  _goalStep=1;
+  $("goalBody").hidden=false; $("goalKwBody").hidden=true;
+  $("goalTitle").textContent="오늘 작업 목표";
+  $("goalSub").textContent="작업할 블로그를 선택하세요";
+  $("goalBack").hidden=true;
+  btnLabel($("goalStart"),"다음: 키워드 고르기");
+  recalcGoal();
+}
+function goToKeywordStep(){
+  const ids=selectedGoalIds();
+  if(!ids.length){ toast("작업할 블로그를 선택하세요"); return; }
+  _goalStep=2;
+  $("goalBody").hidden=true; $("goalKwBody").hidden=false;
+  $("goalTitle").textContent="어떤 키워드로 쓸까요";
+  $("goalSub").textContent="학습 블로그에서 수집한 키워드 중에서 고릅니다";
+  $("goalBack").hidden=false;
+  btnLabel($("goalStart"),"작업 시작");
+  renderKwStep(ids);
+  loadPlans(ids);
+}
+$("goalBack").onclick=goToBlogStep;
+
+function renderKwStep(ids){
+  const body=$("goalKwBody");
+  body.className="goal-body step-in";
+  body.innerHTML=ids.map(id=>{
+    const a=_accounts.find(x=>x.id===id)||{};
+    return `<div class="kw-acct" data-kid="${id}">
+      <div class="kw-head">
+        <div><b>${escapeHtml(a.name||"")}</b> <span class="muted">@${escapeHtml(a.blogId||"")}</span></div>
+        <span class="kw-need" data-role="need">글 ${planNeed(id)}편</span>
+      </div>
+      <div data-role="plan"><div class="kw-loading"><span class="spin"></span>학습 블로그에서 키워드를 불러오는 중…</div></div>
+    </div>`;
+  }).join("");
+  recalcGoal();
+}
+
+// 계정 수만큼 크롤이 돌 수 있어 하나씩 순서대로 불러오고, 오는 대로 그려 준다.
+// 한 번 불러온 계정은 다시 받지 않는다 (뒤로 갔다 와도 고른 키워드가 유지된다)
+async function loadPlans(ids){
+  for(const id of ids){
+    if(_goalStep!==2) return;                   // 사용자가 뒤로 갔으면 중단
+    const node=$("goalKwBody").querySelector(`[data-kid="${id}"] [data-role="plan"]`);
+    if(!node) continue;
+    if(!_plans[id]){
+      let plan;
+      try{ plan=await (await fetch(`/api/accounts/${id}/keyword-plan`)).json(); }
+      catch(e){ plan={error:"키워드를 불러오지 못했습니다: "+e}; }
+      _plans[id]=plan;
+      // 사진 있는 후보를 글 수만큼 미리 골라 둔다 (그대로 시작하면 자동 선정과 같은 결과)
+      const need=planNeed(id);
+      _picks[id]=(plan.candidates||[]).filter(c=>c.hasImage).slice(0,need).map(c=>c.keyword);
+    }
+    renderPlan(id);
+  }
+}
+
+function renderPlan(id){
+  const wrap=$("goalKwBody").querySelector(`[data-kid="${id}"]`);
+  if(!wrap) return;
+  const node=wrap.querySelector('[data-role="plan"]');
+  const plan=_plans[id]||{};
+  const need=planNeed(id);
+  const recent=plan.recent||[];
+  const cands=plan.candidates||[];
+
+  const recentHtml=recent.length
+    ? `<div class="kw-recent">${recent.map(r=>`<div class="r">
+        <span class="d">${fmtMD(r.publishedAt)}</span>
+        <span class="k">${escapeHtml(r.mainKeyword||"(기록 없음)")}</span>
+        <span class="t">${escapeHtml(r.title||"")}</span>
+      </div>`).join("")}</div>`
+    : `<div class="muted">이 블로그로 발행한 글이 아직 없습니다.</div>`;
+
+  const recoHtml=plan.recommended
+    ? `<div class="kw-reco">
+         <span class="tag">✳ 추천</span><span class="name">${escapeHtml(plan.recommended)}</span>
+         <span class="why">${escapeHtml(plan.recommendReason||"")}</span>
+       </div>`
+    : "";
+
+  const chipsHtml=cands.length
+    ? `<div class="chips" data-role="chips">${cands.map(c=>`
+        <button type="button" class="chip" data-kw="${escapeHtml(c.keyword)}">
+          <span data-role="n"></span><span>${escapeHtml(c.keyword)}</span>${c.hasImage?"":'<span class="noimg">사진없음</span>'}
+        </button>`).join("")}</div>`
+    : "";
+
+  const blocked=plan.blocked||[];
+  const blockedHtml=blocked.length
+    ? `<button type="button" class="kw-more" data-role="more">겹쳐서 제외된 키워드 ${blocked.length}개 보기</button>
+       <div class="kw-blocked" data-role="blocked" hidden>${blocked.map(b=>`${escapeHtml(b.keyword)} <span style="color:#4a4a52">— ${escapeHtml(b.reason)}</span>`).join("<br>")}</div>`
+    : "";
+
+  node.innerHTML=`
+    <div class="kw-sec">
+      <div class="kw-label">이 블로그가 최근 쓴 메인키워드 · 최신순</div>
+      ${recentHtml}
+    </div>
+    ${plan.error?`<div class="kw-warn">⚠️ ${escapeHtml(plan.error)}</div>`:""}
+    ${recoHtml?`<div class="kw-sec">${recoHtml}</div>`:""}
+    ${cands.length?`<div class="kw-sec">
+      <div class="kw-label">학습 블로그 수집 키워드${plan.learnFrom?` · <span class="id">@${escapeHtml(plan.learnFrom)}</span>`:""}</div>
+      ${chipsHtml}
+      <div class="kw-tip">${need>1
+        ? `글 ${need}편 — 고른 순서대로 씁니다. ${need}개를 다 고른 뒤 하나 더 고르면 먼저 고른 것이 빠집니다.`
+        : "글 1편 — 하나만 고릅니다. 고르지 않으면 추천 키워드로 씁니다."}</div>
+      ${blockedHtml}
+    </div>`:(blockedHtml?`<div class="kw-sec">${blockedHtml}</div>`:"")}`;
+
+  const more=node.querySelector('[data-role="more"]');
+  if(more) more.onclick=()=>{ const b=node.querySelector('[data-role="blocked"]'); b.hidden=!b.hidden; more.textContent=b.hidden?`겹쳐서 제외된 키워드 ${blocked.length}개 보기`:"제외된 키워드 접기"; };
+  node.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>toggleKw(id,ch.dataset.kw));
+  paintChips(id);
+}
+
+// 글 수만큼만 고를 수 있다. 다 채운 뒤 하나 더 고르면 먼저 고른 것이 빠진다
+// (글 1편이면 자연스럽게 '하나만 선택'으로 동작한다). 번호가 그 자리에서 다시 매겨져 눈으로 확인된다.
+function toggleKw(id,kw){
+  const picks=_picks[id]||(_picks[id]=[]);
+  const at=picks.indexOf(kw);
+  if(at>=0) picks.splice(at,1);
+  else{
+    if(picks.length>=planNeed(id)) picks.shift();
+    picks.push(kw);
+  }
+  paintChips(id);
+}
+
+function paintChips(id){
+  const wrap=$("goalKwBody").querySelector(`[data-kid="${id}"]`);
+  if(!wrap) return;
+  const picks=_picks[id]||[];
+  wrap.querySelectorAll(".chip").forEach(ch=>{
+    const i=picks.indexOf(ch.dataset.kw);
+    ch.classList.toggle("on", i>=0);
+    ch.querySelector('[data-role="n"]').innerHTML = i>=0?`<span class="n">${i+1}</span>`:"";
+  });
+  const need=planNeed(id), needEl=wrap.querySelector('[data-role="need"]');
+  needEl.textContent=`글 ${need}편 · 키워드 ${picks.length}/${need}`;
+  needEl.classList.toggle("done", picks.length===need);
+  recalcGoal();
+}
+
+function fmtMD(iso){ const d=new Date(iso); return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()}`; }
+
 $("goalStart").onclick=async()=>{
   const ids=selectedGoalIds();
   if(!ids.length){ toast("작업할 블로그를 선택하세요"); return; }
+  if(_goalStep===1){ goToKeywordStep(); return; }
+
+  const keywords={}; ids.forEach(id=>{ if((_picks[id]||[]).length) keywords[id]=_picks[id]; });
   closeGoalModal();
+  _plans={}; _picks={};   // 이번 회차에 쓴 키워드는 다음 번 후보에서 빠진다 → 캐시 버림
   await fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collect())}).catch(()=>{});
   $("apiKey").value="";
   $("worklog").textContent="작업 준비 중…"; setWorking(true); fastPoll();
   try{
-    const r=await (await fetch("/api/run/all",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({headless:true,accountIds:ids})})).json();
+    const r=await (await fetch("/api/run/all",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({headless:true,accountIds:ids,keywords})})).json();
     $("worklog").textContent=r.message||"완료"; toast(r.message||"오늘 작업 완료");
   }catch(err){ $("worklog").textContent="실패: "+err; toast("실패: "+err); }
   finally{ await loadStatus(); loadDrafts(); loadAccounts(); }

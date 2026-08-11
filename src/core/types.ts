@@ -179,6 +179,8 @@ export interface PublishedPost {
   id: string;
   title: string;
   url?: string;
+  /** 발행한 블로그 아이디 (다계정 구분 — 예전 기록엔 없다) */
+  blogId?: string;
   mainKeyword?: string;
   publishedAt: string;
   imageCount: number;

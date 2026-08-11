@@ -94,3 +94,15 @@ export function usedKeywords(): string[] {
 export function recentPublished(limit = 20): PublishedPost[] {
   return publishedStore.read().posts.slice(-limit).reverse();
 }
+
+/**
+ * 이 블로그에 발행한 글 (최신순).
+ * blogId를 안 남기던 시절의 기록은 어느 블로그 것인지 알 수 없다 — 이 블로그 기록이
+ * 하나도 없을 때만 그 옛 기록을 보여 준다(단일 계정으로 쓰던 사용자 배려).
+ */
+export function recentPublishedFor(blogId: string, limit = 20): PublishedPost[] {
+  const all = publishedStore.read().posts;
+  const mine = all.filter((p) => p.blogId === blogId);
+  const src = mine.length > 0 ? mine : all.filter((p) => !p.blogId);
+  return src.slice(-limit).reverse();
+}

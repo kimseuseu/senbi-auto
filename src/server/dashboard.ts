@@ -20,13 +20,15 @@ import {
   updateAccount,
   deleteAccount,
   ensureMigrated,
+  resolveAccountSettings,
   type Account,
 } from "../core/accounts";
+import { loadLearnSource, selectKeywords, recommendReason } from "../run/keywordPlan";
 import { startLogin, loginStatus, isLoginInProgress } from "../naver/login";
 import { hasSavedSession } from "../naver/session";
 import { browserStatus } from "../naver/browserSetup";
 import { getSessionState } from "../naver/sessionState";
-import { todayCount, recentPublished } from "../core/activity";
+import { todayCount, recentPublished, recentPublishedFor } from "../core/activity";
 import { createLogger, getLogsSince } from "../core/logger";
 
 const log = createLogger("dashboard");
@@ -180,6 +182,56 @@ export async function startDashboard(port: number): Promise<number> {
     return { ok: true };
   });
 
+  // 발행 전 '어느 키워드로 쓸지' 고르는 화면에 필요한 것 전부:
+  // 학습 블로그에서 수집한 후보 · 이 블로그가 최근에 쓴 메인키워드(최신순) · 추천 키워드
+  app.get<{ Params: { id: string } }>("/api/accounts/:id/keyword-plan", async (req, reply) => {
+    const acc = getAccount(req.params.id);
+    if (!acc) return reply.code(404).send({ error: "계정 없음" });
+    const settings = resolveAccountSettings(acc);
+    const recent = recentPublishedFor(settings.blogId, 12).map((p) => ({
+      title: p.title,
+      mainKeyword: p.mainKeyword ?? "",
+      publishedAt: p.publishedAt,
+      url: p.url,
+    }));
+    try {
+      const src = await loadLearnSource(settings);
+      if (src.posts.length === 0) {
+        return {
+          accountId: acc.id,
+          blogId: settings.blogId,
+          learnFrom: src.learnFrom,
+          postsPerRun: Math.max(1, acc.postsPerRun),
+          candidates: [],
+          blocked: [],
+          recent,
+          recommended: null,
+          error: `학습 블로그(${src.learnFrom})에서 참고글을 가져오지 못했습니다. 상세 설정에서 블로그를 학습해 주세요.`,
+        };
+      }
+      const sel = await selectKeywords(settings, src);
+      const rec = sel.candidates.find((c) => c.keyword === sel.recommended);
+      return {
+        accountId: acc.id,
+        blogId: settings.blogId,
+        learnFrom: src.learnFrom,
+        templateName: src.template?.name ?? "",
+        learnedPosts: src.posts.length,
+        postsPerRun: Math.max(1, acc.postsPerRun),
+        candidates: sel.candidates.slice(0, 40),
+        blocked: sel.blocked.slice(0, 30),
+        recent,
+        recommended: sel.recommended,
+        recommendReason: rec ? recommendReason(rec) : "",
+        error: sel.error,
+      };
+    } catch (err) {
+      return reply
+        .code(500)
+        .send({ error: err instanceof Error ? err.message : "키워드를 불러오지 못했습니다." });
+    }
+  });
+
   // 계정별 로그인 창 띄우기 (비동기 진행 — 상태는 폴링)
   app.post<{ Params: { id: string } }>("/api/accounts/:id/login", async (req, reply) => {
     const acc = getAccount(req.params.id);
@@ -207,10 +259,13 @@ export async function startDashboard(port: number): Promise<number> {
     return d;
   });
 
-  app.post<{ Body: { headless?: boolean; accountIds?: string[] } }>("/api/run/all", async (req) => {
+  app.post<{
+    Body: { headless?: boolean; accountIds?: string[]; keywords?: Record<string, string[]> };
+  }>("/api/run/all", async (req) => {
     const headless = req.body?.headless ?? true;
     const accountIds = req.body?.accountIds;
-    const msg = await runAllNow({ headless, accountIds });
+    const keywords = req.body?.keywords;
+    const msg = await runAllNow({ headless, accountIds, keywords });
     return { message: msg };
   });
 
