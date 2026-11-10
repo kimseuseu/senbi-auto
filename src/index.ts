@@ -3,6 +3,7 @@ import { ensureAppDirs } from "./config/paths";
 import { startDashboard } from "./server/dashboard";
 import { prefetchChromium } from "./naver/browserSetup";
 import { preflight } from "./core/preflight";
+import { pruneImageCache } from "./media/images";
 import { createLogger } from "./core/logger";
 
 const log = createLogger("main");
@@ -17,6 +18,7 @@ async function main() {
 
   log.info(`준비 완료 — 브라우저에서 http://localhost:${bound} 열기`);
   prefetchChromium(); // 자동화용 브라우저가 없으면 백그라운드로 미리 받아 둔다
+  pruneImageCache(); // 발행에 쓰고 남은 오래된 가공 이미지 정리
 }
 
 function shutdown() {

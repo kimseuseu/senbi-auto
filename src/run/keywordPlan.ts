@@ -1,6 +1,6 @@
 import type { CrawledPost } from "../core/types";
 import type { Settings } from "../config/settings";
-import { crawlBlog } from "../crawl/crawler";
+import { crawlBlogCached } from "../crawl/crawler";
 import { getTemplate, type Template } from "../core/templates";
 import { recentTitles, overlapsExisting } from "../generate/keywords";
 import {
@@ -9,7 +9,7 @@ import {
   type PoolKeyword,
 } from "../generate/keywordPool";
 import { keywordHasSource } from "./assets";
-import { usedKeywords } from "../core/activity";
+import { usedKeywords, keywordUses } from "../core/activity";
 import { createLogger } from "../core/logger";
 
 const log = createLogger("keywordPlan");
@@ -37,6 +37,8 @@ export interface KeywordCandidate {
   sourceCount: number;
   /** 학습 블로그에 이 소재의 사진이 있는지 — 없으면 사진 없는 글이 된다 */
   hasImage: boolean;
+  /** 이 블로그에 이 소재를 마지막으로 올린 게 며칠 전인지 (올린 적 없으면 null) */
+  lastUsedDays: number | null;
 }
 
 export interface KeywordSelection {
@@ -67,7 +69,8 @@ export async function loadLearnSource(settings: Settings): Promise<LearnSource> 
   }
 
   log.info(`크롤 학습: ${learnFrom} → 발행 ${settings.blogId} (${settings.crawlCount}건)`);
-  const posts = await crawlBlog(learnFrom, { count: settings.crawlCount });
+  // 키워드 고르기 화면에서 방금 받은 글을 그대로 쓴다 (글마다 다시 받지 않는다)
+  const posts = await crawlBlogCached(learnFrom, { count: settings.crawlCount });
   return { posts, instructions: "", learnFrom, template: null };
 }
 
@@ -81,11 +84,7 @@ export async function selectKeywords(
   settings: Settings,
   src: LearnSource,
 ): Promise<KeywordSelection> {
-  // 템플릿의 keywords = 학습 때 수집해 대시보드에 보여주는 그 목록 → 최우선 후보
-  const pool = collectKeywordPool(src.posts, {
-    brandName: settings.brandName,
-    seeds: src.template?.keywords ?? [],
-  });
+  const pool = collectKeywordPool(src.posts, { brandName: settings.brandName });
   const base = { pool, used: [] as string[], publishedTitles: [] as string[] };
   if (pool.length === 0) {
     return {
@@ -97,11 +96,14 @@ export async function selectKeywords(
     };
   }
 
-  const used = usedKeywords();
+  // 같은 제품을 되풀이해 홍보하는 게 목적이다 — 막는 건 '너무 짧은 간격의 반복'뿐.
+  // 이 블로그에 재사용 간격 안에 올린 키워드만 막는다 (다른 블로그에 올린 것은 상관없다)
+  const reuseDays = Math.max(0, settings.keywordReuseDays ?? 10);
+  const used = usedKeywords(reuseDays, settings.blogId);
   // 학습 블로그 = 발행 블로그면 수집 키워드가 곧 자기 글 제목이라 제목 차단을 걸 수 없다.
   // (걸면 모든 후보가 막힌다) 이 경우엔 '최근 쓴 키워드' 규칙만 적용한다.
   const selfLearning = src.learnFrom === settings.blogId;
-  const publishedTitles = selfLearning ? [] : await recentTitles(settings.blogId, 20);
+  const publishedTitles = selfLearning ? [] : await recentTitles(settings.blogId, 20, reuseDays);
   if (selfLearning) {
     log.info("학습·발행 블로그가 같음 — 최근 쓴 키워드 기준으로만 겹침을 거른다");
   } else {
@@ -123,7 +125,10 @@ export async function selectKeywords(
       candidates: [],
       blocked,
       recommended: null,
-      error: `쓸 수 있는 새 키워드가 없습니다. 수집 키워드 ${pool.length}개가 모두 최근에 쓴 주제와 겹칩니다. 학습 블로그를 다시 학습(새 글 반영)하거나 학습 글 수를 늘려 주세요.`,
+      error:
+        `쓸 수 있는 새 키워드가 없습니다. 수집 키워드 ${pool.length}개가 모두 ` +
+        (reuseDays > 0 ? `최근 ${reuseDays}일 안에 쓴 주제` : "이미 쓴 주제") +
+        `와 겹칩니다. 공통 설정의 '같은 키워드 다시 쓰기까지 간격'을 줄이거나, 학습 블로그를 다시 학습(새 글 반영)해 주세요.`,
     };
   }
 
@@ -141,12 +146,25 @@ export async function selectKeywords(
     );
   }
 
+  // 제품이 고르게 돌아가며 올라가게 한다: 올린 적 없는 것 먼저, 그다음 가장 오래전에 올린 것부터.
+  // (순서를 고정해 두면 앞쪽 몇 개만 되풀이되고 뒤쪽 제품은 영영 차례가 오지 않는다)
+  const history = keywordUses(settings.blogId);
+  const lastUsedAt = (keyword: string): number =>
+    history.reduce(
+      (latest, u) => (u.at > latest && overlapsExisting(keyword, [u.keyword]) ? u.at : latest),
+      0,
+    );
+  const now = Date.now();
+  const timed = ordered.map((c) => ({ c, at: lastUsedAt(c.keyword) }));
+  timed.sort((a, b) => a.at - b.at); // 안정 정렬 — 같은 시각끼리는 원래 순서 유지
+
   // ⚠️ 학습 블로그에 해당 소재의 이미지가 없으면 글만 있고 사진이 없는 글이 된다 → 자동 선정에선 건너뛴다
-  const candidates: KeywordCandidate[] = ordered.map((c) => ({
+  const candidates: KeywordCandidate[] = timed.map(({ c, at }) => ({
     keyword: c.keyword,
     sourceTitle: c.sourceTitle,
     sourceCount: c.sourceCount,
     hasImage: keywordHasSource(src.posts, c.keyword),
+    lastUsedDays: at > 0 ? Math.floor((now - at) / 86400_000) : null,
   }));
   const skipped = candidates.filter((c) => !c.hasImage).map((c) => c.keyword);
   if (skipped.length > 0) {
@@ -173,7 +191,7 @@ export async function selectKeywords(
 export function recommendReason(c: KeywordCandidate): string {
   const bits = [
     c.sourceCount > 1 ? `학습 글 ${c.sourceCount}편에서 반복된 소재` : "학습 블로그에서 수집",
-    "최근 쓴 주제와 안 겹침",
+    c.lastUsedDays === null ? "아직 올린 적 없음" : `마지막으로 올린 지 ${c.lastUsedDays}일`,
     c.hasImage ? "이 소재 사진 있음" : "사진 없음",
   ];
   return bits.join(" · ");

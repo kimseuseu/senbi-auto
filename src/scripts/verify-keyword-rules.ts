@@ -10,6 +10,7 @@ import {
   collectKeywordPool,
   filterFreshKeywords,
 } from "../generate/keywordPool";
+import { overlapsExisting } from "../generate/keywords";
 
 // 키워드 두 규칙이 실제로 작동하는지 점검한다.
 //  ① 학습 블로그에서 수집한 키워드만 사용
@@ -42,7 +43,7 @@ async function main() {
   }
 
   // ---------- 수집 ----------
-  const pool = collectKeywordPool(posts, { brandName: s.brandName, seeds: tpl?.keywords ?? [] });
+  const pool = collectKeywordPool(posts, { brandName: s.brandName });
   console.log(`[수집된 키워드 ${pool.length}개]`);
   for (const p of pool.slice(0, 20)) {
     console.log(`  · ${p.keyword}   ← "${p.sourceTitle.slice(0, 40)}"`);
@@ -50,8 +51,11 @@ async function main() {
   check("학습 블로그에서 키워드를 수집했다", pool.length > 0, `${pool.length}개`);
 
   // ---------- 겹침 필터 ----------
-  const used = usedKeywords();
-  console.log(`\n[최근 쓴 키워드 ${used.length}개] ${used.slice(-8).join(" · ") || "(없음)"}`);
+  const reuseDays = Math.max(0, s.keywordReuseDays ?? 10);
+  const used = usedKeywords(reuseDays);
+  console.log(
+    `\n[최근 ${reuseDays || "∞"}일 안에 쓴 키워드 ${used.length}개] ${used.slice(-8).join(" · ") || "(없음)"}`,
+  );
   const { fresh, blocked } = filterFreshKeywords(pool, used, []);
   console.log(`사용 가능 ${fresh.length}개 / 겹쳐서 제외 ${blocked.length}개`);
   for (const b of blocked.slice(0, 8)) console.log(`  × ${b.keyword} (${b.reason})`);
@@ -80,10 +84,34 @@ async function main() {
     r2.ok ? "통과되어 버림(문제)" : r2.error,
   );
 
-  // ②-1 표현만 바꾼 유사 키워드도 걸러져야 한다
-  const rephrased = pick.keyword.split(/\s+/).reverse().join(" ");
-  const r3 = assertKeywordAllowed(rephrased, pool, asIfUsed, []);
-  check("②-1 어순만 바꾼 유사 키워드도 거부된다", !r3.ok, r3.ok ? "통과되어 버림(문제)" : r3.error);
+  // ②-1 표현만 바꾼 유사 키워드도 걸러져야 한다.
+  //      assertKeywordAllowed 는 규칙 ①(수집 여부)을 먼저 보므로, 어순을 바꾼 말은 거기서 먼저 걸려
+  //      겹침 규칙이 실제로 작동하는지는 알 수 없다 → 겹침 판정만 따로 검사한다.
+  const words = pick.keyword.split(/\s+/);
+  if (words.length >= 2) {
+    const rephrased = [...words].reverse().join(" ");
+    check(
+      "②-1 어순만 바꾼 유사 키워드도 겹침으로 판정된다",
+      overlapsExisting(rephrased, [pick.keyword]),
+      `"${rephrased}" ↔ "${pick.keyword}"`,
+    );
+  }
+
+  // ②-2 거래어만 바꾼 키워드(렌탈 ↔ 대여)도 같은 소재로 걸러져야 한다
+  check(
+    "②-2 거래어만 바꾼 키워드도 겹침으로 판정된다",
+    overlapsExisting("돈풍기 임대", ["돈풍기 대여"]) &&
+      !overlapsExisting("업소용 냉동고 렌탈", ["업소용 냉장고 렌탈"]),
+    "돈풍기 임대 ↔ 돈풍기 대여 (겹침) · 업소용 냉동고 ↔ 업소용 냉장고 (다른 소재)",
+  );
+
+  // ②-3 재사용 금지 기간이 지난 키워드는 다시 쓸 수 있어야 한다 (후보 고갈 방지)
+  const everUsed = usedKeywords(0);
+  check(
+    "②-3 기간이 지난 키워드는 막는 목록에서 빠진다",
+    usedKeywords(1).length <= used.length && used.length <= everUsed.length,
+    `1일 ${usedKeywords(1).length}개 ≤ ${reuseDays}일 ${used.length}개 ≤ 전체 ${everUsed.length}개`,
+  );
 
   // ③ 정상 키워드는 통과해야 한다
   const r4 = assertKeywordAllowed(pick.keyword, pool, used, []);

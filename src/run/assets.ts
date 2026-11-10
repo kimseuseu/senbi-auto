@@ -14,7 +14,7 @@ import {
   prepareSharp,
   prepareVerbatim,
 } from "../media/images";
-import { filterUnusedImages } from "../core/usedImages";
+import { filterUnusedImages, usedImagesOldestFirst } from "../core/usedImages";
 import { createLogger } from "../core/logger";
 
 const log = createLogger("assets");
@@ -187,11 +187,12 @@ export async function buildPostAssets(
     }
   }
 
-  // 이미 발행에 쓴 사진은 뺀다 — 사진까지 겹치면 유사문서 판정이 강해진다
-  const beforeDedupe = pool.length;
-  pool = filterUnusedImages(pool);
-  if (beforeDedupe !== pool.length) {
-    log.info(`이전 글에 쓴 사진 ${beforeDedupe - pool.length}장 제외`);
+  // 안 쓴 사진을 먼저 쓴다. 같은 제품을 되풀이해 올리면 그 제품 사진은 금방 다 쓰므로,
+  // 모자라면 맨 마지막에 '가장 오래전에 쓴 사진'부터 다시 쓴다 (아래 참고)
+  const candidates = pool;
+  pool = filterUnusedImages(candidates);
+  if (candidates.length !== pool.length) {
+    log.info(`이전 글에 쓴 사진 ${candidates.length - pool.length}장은 뒤로 미룸 (안 쓴 사진 ${pool.length}장 먼저)`);
   }
 
   // 내 이미지 폴더가 켜져 있으면 먼저 채운다 (학습 블로그 사진 재사용을 줄인다)
@@ -219,11 +220,24 @@ export async function buildPostAssets(
       const sameTopic = ranked
         .slice(1)
         .filter((p) => keywordHasSource([p], keyword) || p.title.includes(keyword));
+      const sameTopicAll: string[] = [];
       for (const p of sameTopic) {
         if (need() <= 0) break;
-        const extra = filterUnusedImages(p.images.slice(1).filter((u) => !isSig(u)));
-        const more = await prepareOrdered(extra, need(), settings.filterStrength);
+        const theirs = p.images.slice(1).filter((u) => !isSig(u));
+        sameTopicAll.push(...theirs);
+        const more = await prepareOrdered(
+          filterUnusedImages(theirs),
+          need(),
+          settings.filterStrength,
+        );
         if (more.length > 0) log.info(`같은 주제 글 "${p.title.slice(0, 20)}"에서 ${more.length}장 보충`);
+        bodyImages = bodyImages.concat(more);
+      }
+      // 안 쓴 사진이 바닥났다 — 이 제품 사진 중 가장 오래전에 쓴 것부터 다시 쓴다
+      if (need() > 0) {
+        const again = usedImagesOldestFirst([...candidates, ...sameTopicAll]);
+        const more = await prepareOrdered(again, need(), settings.filterStrength);
+        if (more.length > 0) log.info(`안 쓴 사진이 모자라 예전에 쓴 사진 ${more.length}장을 다시 사용`);
         bodyImages = bodyImages.concat(more);
       }
     }

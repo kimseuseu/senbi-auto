@@ -47,6 +47,29 @@ const BANNED_GUIDANCE = `네이버 블로그에서 저품질 판정을 받기 �
 - 비속어, 은어, 자극적인 표현 전반
 - 같은 키워드의 부자연스러운 반복(키워드 스터핑)`;
 
+/**
+ * 글 맨 위 핵심 요약 규칙.
+ *
+ * 검색 AI(네이버 AI 브리핑 등)는 질문에 바로 답하는 완결된 문장을 가져다 쓴다.
+ * 학습 블로그는 인사말로 시작하고 23자마다 줄을 바꿔 쓰는데, 그런 도입부는 인용할 문장이 없다.
+ * 그래서 본문 문체와 상관없이, 글 맨 위에 '이 글이 무엇에 답하는지'를 담백하게 적어 둔다.
+ */
+const SUMMARY_RULE = `[글 맨 위 핵심 요약 — summary 필드]
+본문(content)과 별도로, 글 맨 위에 놓일 요약을 summary 에 쓴다. 검색 AI가 이 글을 인용할 때 그대로 가져다 쓸 수 있는 문장이어야 한다.
+- 3문장, 전체 120~220자(공백 포함). 한 문장은 한 줄에 끝까지 쓰고(문장 중간에 줄을 바꾸지 않는다), 문장 사이는 줄바꿈 하나로 나눈다.
+- 1번째 문장: 메인키워드가 무엇이고 어떤 때 쓰는지 바로 답하는 정의문으로 쓴다. "메인키워드(이)란 …을 말합니다" 꼴을 쓰고, 메인키워드는 글자 그대로 넣는다.
+- 2번째 문장: 이 글이 다루는 내용을 본문 순서대로 짚는다(예: 쓰임새, 고르는 기준, 진행 순서, 자주 묻는 질문).
+- 3번째 문장: 읽는 사람이 가져갈 결론이나 판단 기준을 한 문장으로 적는다.
+- 문체: 이 부분만은 참고글의 말투를 따르지 않는다. 인사말·감탄·이모지·물음표·상호 소개 없이 "~입니다/~합니다"로 끝나는 담백한 설명문으로 쓴다.
+- 본문에 있는 사실만 쓴다. 본문에 없는 수치·가격·기간·스펙을 새로 만들지 않는다.
+- 금지 표현·필터 단어 규칙은 요약에도 똑같이 적용한다.`;
+
+const SUMMARY_PROP = {
+  type: "string",
+  description:
+    "글 맨 위에 놓일 핵심 요약. 3문장, 한 줄에 한 문장(문장 사이는 줄바꿈 하나), 전체 120~220자. 담백한 설명문.",
+} as const;
+
 const HEADINGS_PROP = {
   type: "array",
   items: { type: "string" },
@@ -58,6 +81,7 @@ const GEN_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string", description: "블로그 글 제목 (메인키워드 포함)" },
+    summary: SUMMARY_PROP,
     content: {
       type: "string",
       description:
@@ -65,7 +89,7 @@ const GEN_SCHEMA = {
     },
     headings: HEADINGS_PROP,
   },
-  required: ["title", "content", "headings"],
+  required: ["title", "summary", "content", "headings"],
   additionalProperties: false,
 } as const;
 
@@ -73,6 +97,7 @@ const VALIDATE_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
+    summary: SUMMARY_PROP,
     content: { type: "string" },
     replacedWords: {
       type: "array",
@@ -88,9 +113,31 @@ const VALIDATE_SCHEMA = {
     },
     headings: HEADINGS_PROP,
   },
-  required: ["title", "content", "replacedWords", "headings"],
+  required: ["title", "summary", "content", "replacedWords", "headings"],
   additionalProperties: false,
 } as const;
+
+/** 한 단계가 돌려주는 글 */
+interface Draft {
+  title: string;
+  summary: string;
+  content: string;
+  headings: string[];
+}
+
+/**
+ * 요약을 '한 줄에 한 문장'으로 정돈한다.
+ * 모델이 문장을 한 줄에 몰아 쓰거나 빈 줄·번호를 섞어도 같은 모양으로 맞춘다.
+ */
+export function tidySummary(raw: string | undefined): string {
+  if (!raw?.trim()) return "";
+  return raw
+    .split(/\n+|(?<=[.!?])\s+(?=[가-힣A-Za-z0-9"'(])/)
+    .map((s) => s.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim())
+    .filter((s) => s.length >= 8)
+    .slice(0, 4)
+    .join("\n");
+}
 
 function firstText(message: Anthropic.Message): string {
   for (const block of message.content) {
@@ -246,7 +293,10 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
     input.instructions?.trim()
       ? `\n9. [사용자 추가 지침 — 반드시 반영] ${input.instructions.trim()}`
       : ""
-  }`;
+  }
+
+${SUMMARY_RULE}
+요약은 본문 분량(${TARGET_MIN}~${TARGET_MAX}자)에 포함하지 않는다. 본문 첫 문단은 요약을 되풀이하지 말고 평소처럼 참고글의 방식대로 시작한다.`;
 
   input.onProgress?.("generate");
   const genMessage = await client.messages.create({
@@ -263,7 +313,7 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
     ],
   });
 
-  const draft = extractJson<{ title: string; content: string; headings: string[] }>(genMessage, "글 생성");
+  const draft = extractJson<Draft>(genMessage, "글 생성");
 
   const keywordBlock = `\n\n[검색 노출 키워드 — 아래 표현은 형태 변경·삭제 금지. 금지 표현·필터 규칙과 충돌하면 키워드 보존이 우선한다]\n- 메인키워드: "${input.mainKeyword}" (제목 1회, 본문 4~6회 유지)\n- 서브키워드: ${input.subKeywords.map((k) => `"${k}"`).join(", ")} (각 1~2회 유지)`;
 
@@ -278,7 +328,10 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
    줄이 "1." "2." 같은 번호나 "-", "•" 로 시작하면 그 표기를 없애고 문장으로 자연스럽게 바꾼다.
    단 **"Q." "A." 로 시작하는 줄은 그 표기를 반드시 그대로 둔다**(자주 묻는 질문 형식).
 5. 글의 주제, 문체, 키워드 배치는 바꾸지 않는다.
-6. 본문에 남아 있는 섹션 소제목 줄들을 그대로 headings 배열에 담는다.${keywordBlock}`;
+6. 본문에 남아 있는 섹션 소제목 줄들을 그대로 headings 배열에 담는다.
+7. 글 맨 위 요약(summary)도 1번과 같은 기준으로 검수하고, 아래 규칙에 맞지 않으면 고쳐 쓴다. 본문을 고쳤다면 요약도 고친 본문에 맞춘다.${keywordBlock}
+
+${SUMMARY_RULE}`;
 
   input.onProgress?.("validate");
   const validateMessage = await client.messages.create({
@@ -287,15 +340,15 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
     thinking: { type: "adaptive" },
     system: validateSystem,
     output_config: { format: { type: "json_schema", schema: VALIDATE_SCHEMA } },
-    messages: [{ role: "user", content: `제목: ${draft.title}\n\n${draft.content}` }],
+    messages: [
+      {
+        role: "user",
+        content: `제목: ${draft.title}\n\n[글 맨 위 요약]\n${draft.summary}\n\n[본문]\n${draft.content}`,
+      },
+    ],
   });
 
-  let refined = extractJson<{
-    title: string;
-    content: string;
-    replacedWords: FilterHit[];
-    headings: string[];
-  }>(validateMessage, "검증·정제");
+  let refined = extractJson<Draft & { replacedWords: FilterHit[] }>(validateMessage, "검증·정제");
 
   // ---------- 3단계: 분량 보정 (필요 시 1회) ----------
   const count = countChars(refined.content);
@@ -306,19 +359,21 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
       model: input.model,
       max_tokens: MAX_TOKENS,
       thinking: { type: "adaptive" },
-      system: `너는 블로그 글 분량 조정 전문가다. 글의 주제, 문체, 키워드, 문단 구조와 섹션 소제목 줄을 유지하면서 본문 분량만 공백 제외 ${TARGET_MIN}~${TARGET_MAX}자로 ${direction}서 다시 작성한다. 현재 분량은 공백 제외 ${count}자다. 마크다운 문법은 쓰지 않는다. 본문의 섹션 소제목 줄들을 그대로 headings 배열에 담는다.
+      system: `너는 블로그 글 분량 조정 전문가다. 글의 주제, 문체, 키워드, 문단 구조와 섹션 소제목 줄을 유지하면서 본문 분량만 공백 제외 ${TARGET_MIN}~${TARGET_MAX}자로 ${direction}서 다시 작성한다. 현재 분량은 공백 제외 ${count}자다. 마크다운 문법은 쓰지 않는다. 본문의 섹션 소제목 줄들을 그대로 headings 배열에 담는다. 글 맨 위 요약(summary)은 고친 본문에 맞춰 아래 규칙대로 다시 쓴다(요약은 본문 분량에 포함하지 않는다).
 
 다시 작성할 때 아래 제약을 반드시 지킨다:
-${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`,
+${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}
+
+${SUMMARY_RULE}`,
       output_config: { format: { type: "json_schema", schema: GEN_SCHEMA } },
       messages: [
-        { role: "user", content: `제목: ${refined.title}\n\n${refined.content}` },
+        {
+          role: "user",
+          content: `제목: ${refined.title}\n\n[글 맨 위 요약]\n${refined.summary}\n\n[본문]\n${refined.content}`,
+        },
       ],
     });
-    const fixed = extractJson<{ title: string; content: string; headings: string[] }>(
-      lengthFixMessage,
-      "분량 보정",
-    );
+    const fixed = extractJson<Draft>(lengthFixMessage, "분량 보정");
     refined = { ...fixed, replacedWords: refined.replacedWords };
   }
 
@@ -344,8 +399,11 @@ ${worst.map((h, i) => `${i + 1}. 내 글: "${h.sentence}"\n   원문: "${h.sourc
 - 소제목이 지적됐다면 새 문구로 바꾸고, headings 배열도 바꾼 문구로 채운다.
 - "Q." "A." 로 시작하는 줄의 표기는 유지한다.
 - 본문 분량은 공백 제외 ${TARGET_MIN}~${TARGET_MAX}자.
+- 글 맨 위 요약(summary)은 고친 본문에 맞춰 아래 규칙대로 다시 쓴다.
 
-${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`;
+${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}
+
+${SUMMARY_RULE}`;
 
     const rewriteMessage = await client.messages.create({
       model: input.model,
@@ -353,12 +411,14 @@ ${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`;
       thinking: { type: "adaptive" },
       system: rewriteSystem,
       output_config: { format: { type: "json_schema", schema: GEN_SCHEMA } },
-      messages: [{ role: "user", content: `제목: ${refined.title}\n\n${refined.content}` }],
+      messages: [
+        {
+          role: "user",
+          content: `제목: ${refined.title}\n\n[글 맨 위 요약]\n${refined.summary}\n\n[본문]\n${refined.content}`,
+        },
+      ],
     });
-    const rewritten = extractJson<{ title: string; content: string; headings: string[] }>(
-      rewriteMessage,
-      "독창성 재작성",
-    );
+    const rewritten = extractJson<Draft>(rewriteMessage, "독창성 재작성");
     const next = analyzeOverlap(rewritten.content, refTexts);
     // 더 나빠지면 이전 결과를 지킨다
     if (next.ratio <= overlap.ratio) {
@@ -374,13 +434,17 @@ ${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`;
   const wrappedContent = wrapForMobile(refined.content, input.lineWidth);
 
   // ---------- 5단계: 필터 단어 잔존 검사 ----------
+  const summary = tidySummary(refined.summary);
   const remaining = findRemainingWords(
-    refined.title + "\n" + refined.content,
+    refined.title + "\n" + summary + "\n" + refined.content,
     input.filters,
   );
+  // 인용 적합도는 독자(와 검색 AI)가 실제로 보게 될 순서대로 — 요약이 맨 앞이다
+  const asPublished = summary ? `${summary}\n\n${refined.content}` : refined.content;
 
   return {
     title: refined.title,
+    summary,
     content: wrappedContent,
     rawContent: refined.content,
     headings: (refined.headings ?? []).map((h) => h.trim()).filter(Boolean),
@@ -403,7 +467,7 @@ ${BANNED_GUIDANCE}${filterBlock(input.filters)}${keywordBlock}`;
     }),
     geoScore: computeGeoScore({
       title: refined.title,
-      content: refined.content,
+      content: asPublished,
       mainKeyword: input.mainKeyword,
     }),
   };

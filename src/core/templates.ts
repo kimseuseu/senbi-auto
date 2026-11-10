@@ -4,7 +4,7 @@ import { JsonStore } from "../config/store";
 import { dataPath, ensureDir } from "../config/paths";
 import type { CrawledPost } from "./types";
 import { crawlBlog } from "../crawl/crawler";
-import { normalizeBlogId } from "../crawl/rss";
+import { normalizeBlogId, isValidBlogId, canonicalBlogId } from "../crawl/rss";
 import { downloadImage } from "../media/images";
 import { createLogger } from "./logger";
 
@@ -41,8 +41,22 @@ interface TemplatesDb {
 }
 const store = new JsonStore<TemplatesDb>("templates", { templates: [] });
 
+const TEMPLATES_ROOT = dataPath("templates");
+
+/**
+ * 템플릿 폴더 경로. id 는 URL 로 들어오는 값이라 `../` 가 섞이면 데이터 폴더 밖을
+ * 가리킬 수 있다 — 템플릿 폴더 바로 아래가 아니면 null.
+ */
+function templateDir(id: string): string | null {
+  if (!id || id !== path.basename(id) || id === "." || id === "..") return null;
+  const dir = path.resolve(TEMPLATES_ROOT, id);
+  return path.dirname(dir) === path.resolve(TEMPLATES_ROOT) ? dir : null;
+}
+
 function templateImgDir(id: string): string {
-  return ensureDir(dataPath("templates", id, "img"));
+  const dir = templateDir(id);
+  if (!dir) throw new Error("템플릿 아이디가 올바르지 않습니다.");
+  return ensureDir(path.join(dir, "img"));
 }
 
 /** 제목에서 대표 키워드 추출 — 첫 구분자 앞 구간 */
@@ -102,7 +116,11 @@ export async function learnBlog(
   name: string,
   count = 20,
 ): Promise<Template> {
-  const blogId = normalizeBlogId(blogIdOrUrl);
+  if (!isValidBlogId(normalizeBlogId(blogIdOrUrl))) {
+    throw new Error("블로그 아이디 형식이 올바르지 않습니다(영문·숫자·-·_ 만 가능).");
+  }
+  // 로그인 아이디를 적었더라도 블로그의 실제 주소로 저장한다
+  const blogId = await canonicalBlogId(blogIdOrUrl);
   const id = `${blogId}-${Date.now()}`;
   const imgDir = templateImgDir(id);
   log.info(`학습 시작: ${blogId} (${count}글)`);
@@ -196,14 +214,19 @@ export function setInstructions(id: string, instructions: string): void {
   });
 }
 
-export function deleteTemplate(id: string): void {
+/** @returns 지웠으면 true, 그런 템플릿이 없으면 false (없는 id 로는 아무 폴더도 건드리지 않는다) */
+export function deleteTemplate(id: string): boolean {
+  if (!getTemplate(id)) return false;
   store.update((db) => {
     db.templates = db.templates.filter((t) => t.id !== id);
     return db;
   });
+  const dir = templateDir(id);
+  if (!dir) return true;
   try {
-    fs.rmSync(dataPath("templates", id), { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   } catch {
     /* 무시 */
   }
+  return true;
 }

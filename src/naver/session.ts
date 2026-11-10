@@ -13,6 +13,9 @@ const log = createLogger("session");
 const COOKIE_FILE = dataPath("cookies.json");
 type StoredCookie = Awaited<ReturnType<BrowserContext["cookies"]>>[number];
 
+// 컨텍스트가 어느 계정 것인지 — 닫을 때 최신 쿠키를 그 계정 파일에 다시 저장한다
+const contextAccount = new WeakMap<BrowserContext, string | undefined>();
+
 /** 계정별 브라우저 프로필 폴더 (accountId 없으면 레거시 단일 세션) */
 function sessionDirFor(accountId?: string): string {
   return accountId ? dataPath("accounts", accountId, "session") : SESSION_DIR;
@@ -65,16 +68,32 @@ export function clearBrowserLocks(accountId?: string): void {
   }
 }
 
-export const DESKTOP_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const uaCache = new Map<string, string>();
 
-// 자동화 흔적을 줄이는 초기 스크립트 (문자열로 전달해 Node 타입 충돌 회피)
-const STEALTH_JS = `
-Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR','ko','en-US','en'] });
-Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-window.chrome = window.chrome || { runtime: {} };
-`;
+/**
+ * 창을 숨겨 띄울 때 쓸 User-Agent — 로그인 창(같은 브라우저를 창으로 띄운 것)과 같은 값.
+ * 숨겨 띄우면 같은 브라우저인데도 이름이 "HeadlessChrome" 으로 바뀌어, 로그인한 브라우저와
+ * 발행하는 브라우저가 달라 보인다. 버전·운영체제는 브라우저가 말하는 그대로 둔다.
+ */
+async function headedUserAgent(channel: string): Promise<string | undefined> {
+  const hit = uaCache.get(channel);
+  if (hit) return hit;
+  try {
+    const browser = await chromium.launch({ channel, headless: true });
+    try {
+      const page = await browser.newPage();
+      const ua = String(await page.evaluate("navigator.userAgent"));
+      const fixed = ua.replace("HeadlessChrome", "Chrome");
+      uaCache.set(channel, fixed);
+      return fixed;
+    } finally {
+      await browser.close();
+    }
+  } catch (err) {
+    log.warn("브라우저 User-Agent 확인 실패 — 기본값으로 진행", err);
+    return undefined;
+  }
+}
 
 export interface LaunchOptions {
   /** 창을 띄울지(false) 백그라운드(true). 로그인/튜닝은 headless=false. */
@@ -107,42 +126,41 @@ export async function launchContext(
     args: ["--disable-blink-features=AutomationControlled"],
     ignoreDefaultArgs: ["--enable-automation"],
   };
+  // 브라우저가 스스로 밝히는 정보는 손대지 않는다(실측 2026-09-30).
+  // 예전엔 User-Agent 를 "Chrome/131" 로 고정하고 navigator 값을 스크립트로 덮어썼는데,
+  // 실제 브라우저는 149 라 요청 헤더(sec-ch-ua)와 어긋났고, 백그라운드 실행은 헤더에
+  // "HeadlessChrome" 을 그대로 실어 보냈다. 로그인 창과 발행이 서로 다른 브라우저로 보였다.
+  // → 로그인 창과 같은 브라우저를 창만 숨겨 띄우고(channel: chromium), 값은 위조하지 않는다.
 
   // 기본은 번들 Chromium(사장님이 쓰는 크롬과 충돌 없음, 창이 안정적으로 유지됨).
   // SENBI_USE_CHROME=1 이면 실제 크롬 채널 사용 — 단, 이땐 크롬을 완전히 종료해야 함.
+  // fallbackChannel: Chromium 을 못 받은 상황 — 설치된 브라우저로 진행 (윈도우엔 Edge 가 항상 있다)
   const useRealChrome = process.env.SENBI_USE_CHROME === "1";
+  const open = async (channel: string): Promise<BrowserContext> =>
+    chromium.launchPersistentContext(sessionDir, {
+      ...base,
+      channel,
+      userAgent: base.headless ? await headedUserAgent(channel) : undefined,
+    });
+
   let context: BrowserContext;
   if (fallbackChannel) {
-    // Chromium 을 못 받은 상황 — 설치된 브라우저로 진행 (윈도우엔 Edge 가 항상 있다)
-    context = await chromium.launchPersistentContext(sessionDir, {
-      ...base,
-      channel: fallbackChannel,
-      userAgent: DESKTOP_UA,
-    });
+    context = await open(fallbackChannel);
     log.info(`${fallbackChannel} 브라우저로 실행 (전용 Chromium 을 받지 못해 대체)`);
   } else if (useRealChrome) {
     try {
-      context = await chromium.launchPersistentContext(sessionDir, {
-        ...base,
-        channel: "chrome",
-      });
+      context = await open("chrome");
       log.info("실제 Chrome 채널로 실행 (크롬이 완전히 꺼져 있어야 함)");
     } catch {
-      context = await chromium.launchPersistentContext(sessionDir, {
-        ...base,
-        userAgent: DESKTOP_UA,
-      });
+      context = await open("chromium");
       log.info("번들 Chromium으로 실행 (Chrome 실행 실패 폴백)");
     }
   } else {
-    context = await chromium.launchPersistentContext(sessionDir, {
-      ...base,
-      userAgent: DESKTOP_UA,
-    });
+    context = await open("chromium");
     log.info("번들 Chromium으로 실행");
   }
 
-  await context.addInitScript(STEALTH_JS);
+  contextAccount.set(context, opts.accountId);
 
   // 저장된 로그인 쿠키 재주입 (세션 쿠키 유실 방지)
   const saved = loadSavedCookies(opts.accountId);
@@ -163,6 +181,50 @@ export async function isLoggedIn(context: BrowserContext): Promise<boolean> {
   const cookies = await context.cookies("https://www.naver.com");
   const names = new Set(cookies.map((c) => c.name));
   return names.has("NID_AUT") && names.has("NID_SES");
+}
+
+/** 새 로그인을 받기 전에 예전 인증 쿠키를 지운다 — 남아 있으면 로그인하기도 전에 '로그인됨'으로 보인다 */
+export async function clearAuthCookies(context: BrowserContext): Promise<void> {
+  await context.clearCookies({ name: /^(NID_AUT|NID_SES|nid_inf)$/ });
+}
+
+export type SessionVerdict = "ok" | "expired" | "unknown";
+
+const LOGIN_URL = /nidlogin|nid\.naver\.com/;
+// 에디터가 실제로 떴다는 표시 (제목 칸 · 발행 버튼)
+const EDITOR_READY = '.se-documentTitle, [class*="publish_btn__"]';
+
+/**
+ * 글쓰기 화면이 **실제로** 열리는지로 로그인 세션을 확인한다.
+ *
+ * 쿠키가 있다는 것만으로는 알 수 없다(실측 2026-09-30): 네이버가 세션을 끊은 뒤에도
+ * 블로그 겉 페이지(#mainFrame 이 들어 있는 틀)는 정상으로 내려오고, 그 안의 에디터
+ * (PostWriteForm)만 인증 쿠키를 지우고 로그인 화면으로 보낸다. 그래서 틀이 아니라
+ * 틀 안에 에디터가 뜨는지, 로그인 화면으로 넘어가는지를 본다.
+ *
+ * @returns ok 에디터 확인 · expired 로그인 화면으로 넘어감 · unknown 시간 안에 판단 못 함
+ */
+export async function verifyWriteSession(
+  page: Page,
+  blogId: string,
+  timeoutMs = 20000,
+): Promise<SessionVerdict> {
+  await page.goto(`https://blog.naver.com/${blogId}?Redirect=Write&`, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (LOGIN_URL.test(page.url())) return "expired";
+    const ready = await page
+      .frameLocator("#mainFrame")
+      .locator(EDITOR_READY)
+      .count()
+      .catch(() => 0);
+    if (ready > 0) return LOGIN_URL.test(page.url()) ? "expired" : "ok";
+    await page.waitForTimeout(300);
+  }
+  return "unknown";
 }
 
 /** 로그인된 사용자의 blogId 등을 확인차 반환 (없으면 null) */
@@ -204,6 +266,16 @@ export async function humanType(
 }
 
 export async function closeContext(context: BrowserContext): Promise<void> {
+  // 네이버는 쓰는 동안 인증 쿠키를 새 값으로 바꿔 준다. 로그인 때 받은 값만 계속 넣으면
+  // 하루쯤 뒤 만료되므로, 닫기 전에 지금 값을 저장해 다음 실행이 이어받게 한다.
+  // (서버가 세션을 끊었으면 인증 쿠키가 지워져 있어 저장하지 않는다 — 기존 파일 유지)
+  try {
+    if (contextAccount.has(context) && (await isLoggedIn(context))) {
+      await saveCookies(context, contextAccount.get(context));
+    }
+  } catch (err) {
+    log.warn("쿠키 갱신 저장 실패(무시)", err);
+  }
   try {
     await context.close();
   } catch (err) {

@@ -63,6 +63,11 @@ export interface PublishInput {
   blogId: string;
   /** content(줄바꿈 적용본)가 있으면 그걸로 잦은 줄바꿈 재현, 없으면 rawContent */
   post: { title: string; content?: string; rawContent: string };
+  /**
+   * 글 맨 위 핵심 요약 (한 줄에 한 문장) — 썸네일보다 위에 넣는다.
+   * 검색 AI가 문장을 통째로 가져갈 수 있게 문장 중간에 줄을 바꾸지 않는다.
+   */
+  summary?: string;
   /** 문단·소제목·인용구 순서 (있으면 이걸로 타이핑; 없으면 content를 문단 분할) */
   structuredBody?: BodyBlock[];
   /** 인사말(첫 문단)의 원문 서식 — 색·굵기 재현용 */
@@ -160,8 +165,23 @@ async function toggleBold(frame: Frame): Promise<void> {
   }
 }
 
-async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
+async function applyFormat(
+  frame: Frame,
+  sizeCode = "fs19",
+  opts: { alignOptional?: boolean } = {},
+): Promise<void> {
   await applySize(frame, sizeCode);
+  // 인용구 안에서는 정렬 버튼이 아예 뜨지 않는다. 없는 버튼을 3초씩 기다리면
+  // 소제목마다 시간만 버리고 경고만 쌓인다(실측: 글 1편에 6번) → 있을 때만 누른다.
+  if (opts.alignOptional) {
+    const shown = await frame
+      .locator(SEL.alignButton)
+      .first()
+      .waitFor({ state: "visible", timeout: 600 })
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) return;
+  }
   try {
     await frame.locator(SEL.alignButton).first().click({ timeout: TOOLBAR_TIMEOUT });
     await frame.waitForTimeout(350);
@@ -173,10 +193,59 @@ async function applyFormat(frame: Frame, sizeCode = "fs19"): Promise<void> {
 }
 
 /**
+ * 에디터 오른쪽에 펼쳐지는 '도움말' 패널을 닫는다.
+ *
+ * 도움말은 화면 오른쪽 360px 를 위에서 아래까지 덮는데, 상단 오른쪽의 발행 버튼이 그 밑에 깔린다.
+ * (실측 2026-09: 글을 다 쓰고도 발행 버튼 클릭이 전부 도움말로 가서 발행 실패)
+ * 언제 열리는지는 아직 모른다 — 에디터를 막 열었을 땐 없고 글을 쓰는 도중에 열린다.
+ * 그래서 단계마다 확인하고, 열려 있었으면 어느 단계 뒤였는지 로그로 남긴다.
+ *
+ * @param stage 지금 막 끝난 단계 (로그용)
+ * @returns 패널이 떠 있어서 닫았으면 true
+ */
+export async function dismissHelpPanel(frame: Frame, stage = ""): Promise<boolean> {
+  try {
+    const title = frame.locator(".se-help-title").first();
+    if (!(await title.isVisible().catch(() => false))) return false;
+
+    const close = frame.locator(".se-help-panel-close-button").first();
+    if (await close.isVisible().catch(() => false)) {
+      await close.click({ timeout: 3000 }).catch(() => {});
+      await frame.waitForTimeout(400);
+    }
+    if (await title.isVisible().catch(() => false)) {
+      // 닫기 버튼이 안 먹혔다 — 패널만 숨긴다.
+      // ⚠️ 반드시 .se-help-panel 만 건드릴 것. 그 위 조상(se-container 등)은 에디터 전체다.
+      await frame.evaluate(`(() => {
+        const panel = document.querySelector(".se-help-panel");
+        if (!panel) return;
+        const btn = Array.from(panel.querySelectorAll("button")).find((b) =>
+          /close|닫기/i.test((b.getAttribute("class") || "") + (b.textContent || "")),
+        );
+        if (btn) btn.click();
+        panel.classList.remove("se-is-on");
+        panel.style.display = "none";
+      })()`);
+      await frame.waitForTimeout(300);
+    }
+    log.info(`에디터 도움말 패널 닫음${stage ? ` — ${stage} 뒤에 열려 있었음` : ""}`);
+    return true;
+  } catch (err) {
+    log.warn("도움말 패널 닫기 실패(무시)", err);
+    return false;
+  }
+}
+
+/**
  * 견고한 클릭 — 요소가 가려지거나 애니메이션 중이라 기본 클릭이 멈추는 것을 방지.
  * 스크롤로 보이게 → 짧은 타임아웃 일반 클릭 시도 → 마지막엔 force 클릭 폴백.
+ * beforeRetry — 다시 누르기 전에 가리고 있는 것을 치울 기회.
  */
-async function robustClick(target: Locator, label: string): Promise<void> {
+async function robustClick(
+  target: Locator,
+  label: string,
+  beforeRetry?: () => Promise<unknown>,
+): Promise<void> {
   await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -190,6 +259,7 @@ async function robustClick(target: Locator, label: string): Promise<void> {
     } catch (err) {
       if (attempt === 3) throw err;
       log.warn(`${label} 클릭 재시도 ${attempt}/3`, err);
+      await beforeRetry?.().catch(() => {});
       await new Promise((r) => setTimeout(r, 1200));
     }
   }
@@ -420,6 +490,8 @@ async function applyEmphasis(
   frame: Frame,
   page: Page,
   targets: { text: string; color?: string; bold?: boolean; where?: "head" | "tail" }[],
+  /** '문서 앞쪽'으로 볼 문단 수 — 맨 위에 요약을 넣으면 인사말이 그만큼 뒤로 밀린다 */
+  headLimit = 6,
 ): Promise<void> {
   const list = targets.filter((t) => t.text.trim() && (t.color || t.bold));
   if (list.length === 0) return;
@@ -436,7 +508,7 @@ async function applyEmphasis(
         const norm = (s) => (s || "").replace(/[\\s\\u200b]/g, "");
         const t = norm(${JSON.stringify(line)});
         const from = ${JSON.stringify(scope)} === "head" ? 0 : Math.max(0, ps.length - 14);
-        const to = ${JSON.stringify(scope)} === "head" ? Math.min(ps.length, 6) : ps.length;
+        const to = ${JSON.stringify(scope)} === "head" ? Math.min(ps.length, ${Math.max(6, Math.floor(headLimit))}) : ps.length;
         for (let i = from; i < to; i++) if (norm(ps[i].innerText) === t) return i;
         return -1;
       })()`;
@@ -588,7 +660,9 @@ async function applyStructuredFormats(
           await page.keyboard.press("Home");
           await page.keyboard.press("Shift+End"); // 그 줄만 선택
           await frame.waitForTimeout(250);
-          if (textStyle.headingSize) await applyFormat(frame, textStyle.headingSize);
+          if (textStyle.headingSize) {
+            await applyFormat(frame, textStyle.headingSize, { alignOptional: true });
+          }
           if (textStyle.headingBold) {
             await frame.locator(SEL.boldButton).first().click({ timeout: 3000 });
             await frame.waitForTimeout(250);
@@ -744,6 +818,34 @@ async function insertImageGroup(
 }
 
 /**
+ * 글 맨 위 핵심 요약을 입력한다. 커서는 본문 첫 줄에 있어야 한다.
+ * @returns 입력한 줄 수 (요약이 없으면 0)
+ */
+export async function typeSummary(
+  page: Page,
+  frame: Frame,
+  summary: string | undefined,
+  textStyle?: { bodyFont?: string; bodySize?: string },
+): Promise<number> {
+  const lines = (summary ?? "")
+    .split(/\n+/)
+    .map((l) => stripListMarker(l.trim()))
+    .filter(Boolean);
+  if (lines.length === 0) return 0;
+
+  await applyFontFamily(frame, textStyle?.bodyFont);
+  await applyFormat(frame, textStyle?.bodySize ?? "fs19");
+  for (const line of lines) {
+    await page.keyboard.type(line, { delay: 6 });
+    await page.keyboard.press("Enter"); // 문장마다 한 문단 — 문장이 중간에 끊기지 않는다
+  }
+  await page.keyboard.press("Enter"); // 요약과 아래 내용 사이 빈 줄
+  await humanDelay(0.2, 0.4);
+  log.info(`핵심 요약 ${lines.length}문장 입력 (글 맨 위)`);
+  return lines.length;
+}
+
+/**
  * 생성된 글을 SmartEditor에 채워 발행(또는 임시저장)한다.
  * 흐름: 글쓰기 진입 → 복구 팝업 취소 → 제목 → 본문(문단 사이 이미지) →
  *       (dryRun이면 임시저장) 발행 패널 → 공개설정·태그 → 확정 발행 → URL.
@@ -793,6 +895,9 @@ export async function publishPost(
       /* 팝업 없음 */
     }
 
+    // 0-1) 도움말 패널 닫기
+    await dismissHelpPanel(frame, "에디터 진입");
+
     // 1) 제목
     await frame.locator(SEL.title).first().click();
     await page.keyboard.type(input.post.title, { delay: 20 });
@@ -802,12 +907,17 @@ export async function publishPost(
     await frame.locator(SEL.body).first().click();
     await humanDelay(0.3, 0.6);
 
+    // 2-0) 핵심 요약: 썸네일보다 위, 글의 맨 처음에 넣는다.
+    //      한 줄에 한 문장 — 본문처럼 23자마다 끊지 않는다(끊긴 문장은 인용하기 어렵다).
+    const summaryLines = await typeSummary(page, frame, input.summary, input.textStyle);
+
     // 2-1) 썸네일: 맨 위에 단독 삽입 (콜라주 없이, 가운데 정렬)
     if (input.thumbnail) {
       await insertImageGroup(page, frame, [input.thumbnail.path], { center: true });
       await page.keyboard.press("Enter"); // 이미지 아래 줄로 이동
       await humanDelay(0.2, 0.4);
       log.info("썸네일 상단 삽입");
+      await dismissHelpPanel(frame, "썸네일 삽입");
     }
 
     // 2-2) 서식 — 학습한 서체 + 글자크기(기본 19pt) + 가운데 정렬
@@ -909,6 +1019,8 @@ export async function publishPost(
       log.info("제품사양 표 삽입 (본문 끝)");
     }
 
+    await dismissHelpPanel(frame, "본문·사진 입력");
+
     // 4) 서명 (학습 블로그의 반복되는 마지막 블록) — 순서대로 그대로 복사
     if (input.signature && input.signature.length > 0) {
       for (const b of input.signature) {
@@ -934,10 +1046,12 @@ export async function publishPost(
         }
       }
       log.info(`서명 ${input.signature.length}블록 삽입`);
+      await dismissHelpPanel(frame, "서명 삽입");
     }
 
     // 5) 소제목·인용구 서식 — 모든 입력이 끝난 뒤 마지막에 (커서 갇힘 문제 회피)
     await applyStructuredFormats(frame, page, bodyBlocks, input.textStyle);
+    await dismissHelpPanel(frame, "소제목·인용구 서식");
 
     // 6) 원문의 색·굵기 재현
     //    서명은 위에서 조각(run) 단위로 이미 그대로 찍었다.
@@ -957,7 +1071,7 @@ export async function publishPost(
         });
       }
     }
-    await applyEmphasis(frame, page, emphasis);
+    await applyEmphasis(frame, page, emphasis, 6 + (summaryLines > 0 ? summaryLines + 2 : 0));
     await applyInlineColors(frame, page, input.inlineColors ?? []);
 
     // 3) dryRun → 임시저장까지만
@@ -976,7 +1090,22 @@ export async function publishPost(
 
     // 4) 발행 패널
     log.info("발행 패널 열기");
-    await robustClick(frame.locator(SEL.publishOpen).first(), "발행 패널 열기");
+    const helpFrame = frame;
+    await dismissHelpPanel(helpFrame, "색·굵기 서식");
+    const visLabel = frame.locator(`label[for="${SEL.visibility[input.visibility ?? "all"].replace("#", "")}"]`).first();
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await robustClick(frame.locator(SEL.publishOpen).first(), "발행 패널 열기", () =>
+        dismissHelpPanel(helpFrame, "발행 버튼 클릭 시도"),
+      );
+      // 눌렀는데도 패널이 안 열렸으면(클릭이 다른 데로 갔으면) 한 번 더 시도한다
+      const opened = await visLabel
+        .waitFor({ state: "visible", timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+      if (opened) break;
+      log.warn(`발행 패널이 열리지 않음 — 다시 시도 ${attempt}/2`);
+      await dismissHelpPanel(helpFrame, "발행 버튼 클릭");
+    }
     await humanDelay(1.5, 2.5);
 
     // 4-0) 카테고리 (지정했을 때만 — 실패해도 발행은 계속한다)

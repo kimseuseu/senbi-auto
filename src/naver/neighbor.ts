@@ -141,7 +141,7 @@ async function engagePost(
       } else {
         await box.scrollIntoViewIfNeeded().catch(() => {});
         // ⚠️ locator.click()은 플레이스홀더 오버레이에 가려 30초 타임아웃 → JS로 직접 포커스
-        // (DOM 타입 충돌 회피를 위해 문자열로 전달 — session.ts STEALTH_JS와 동일 관례)
+        // (DOM 타입 충돌 회피를 위해 문자열로 전달)
         const focusJs = `(() => {
           const els = Array.from(document.querySelectorAll(${JSON.stringify(SEL.commentText)}));
           const el = els.find((e) => e.getBoundingClientRect().width > 0) || els[0];
@@ -266,6 +266,8 @@ export async function runNeighborRound(
   context: BrowserContext,
   settings: Settings,
   apiKey: string,
+  /** 한도·중복 방지를 이 계정 기준으로 센다 (다계정이면 계정마다 따로) */
+  accountId?: string,
 ): Promise<{ likes: number; comments: number }> {
   const n = settings.neighbor;
   const feed = await fetchNeighborFeed(context, 40);
@@ -278,20 +280,20 @@ export async function runNeighborRound(
     for (const item of feed) {
       if (shouldStop()) { log.info("중지 요청 — 이웃 소통 중단"); break; }
       // 한도 체크
-      const likeRoom = todayCount("like") < n.dailyLikeLimit;
-      const commentRoom = todayCount("comment") < n.dailyCommentLimit;
+      const likeRoom = todayCount("like", accountId) < n.dailyLikeLimit;
+      const commentRoom = todayCount("comment", accountId) < n.dailyCommentLimit;
       if (!likeRoom && !commentRoom) {
         log.info("일일 공감·댓글 한도 도달 — 라운드 종료");
         break;
       }
       // 최근 이 블로그에 이미 활동했으면 스킵 (도배 방지)
-      if (actedRecently(item.blogId, "comment", 3) && actedRecently(item.blogId, "like", 3)) {
+      if (actedRecently(item.blogId, "comment", 3, accountId) && actedRecently(item.blogId, "like", 3, accountId)) {
         continue;
       }
 
       // 맥락형 댓글 생성 (한도 남았을 때만)
       let comment: string | null = null;
-      if (commentRoom && !actedRecently(item.blogId, "comment", 7)) {
+      if (commentRoom && !actedRecently(item.blogId, "comment", 7, accountId)) {
         try {
           const post = await fetchPostContent(item.blogId, item.logNo, item.title);
           comment = await generateComment(apiKey, settings.model, post.title, post.text);
@@ -303,15 +305,15 @@ export async function runNeighborRound(
       // 공감 한도가 차도 댓글은 계속할 수 있어야 한다 (예전엔 likeRoom이 댓글까지 막았음)
       const { liked, commented } = await engagePost(page, item, comment, likeRoom);
       if (liked) {
-        logActivity({ action: "like", targetBlogId: item.blogId, targetLogNo: item.logNo, ok: true });
+        logActivity({ accountId, action: "like", targetBlogId: item.blogId, targetLogNo: item.logNo, ok: true });
         likes++;
-        log.info(`♥ 공감 ${item.blogId} (오늘 ${todayCount("like")}/${n.dailyLikeLimit})`);
+        log.info(`♥ 공감 ${item.blogId} (오늘 ${todayCount("like", accountId)}/${n.dailyLikeLimit})`);
       }
       if (commented && comment) {
-        logActivity({ action: "comment", targetBlogId: item.blogId, targetLogNo: item.logNo, message: comment, ok: true });
+        logActivity({ accountId, action: "comment", targetBlogId: item.blogId, targetLogNo: item.logNo, message: comment, ok: true });
         comments++;
         log.info(
-          `💬 댓글 등록 ${item.blogId} (오늘 ${todayCount("comment")}/${n.dailyCommentLimit}) — "${comment.slice(0, 30)}${comment.length > 30 ? "…" : ""}"`,
+          `💬 댓글 등록 ${item.blogId} (오늘 ${todayCount("comment", accountId)}/${n.dailyCommentLimit}) — "${comment.slice(0, 30)}${comment.length > 30 ? "…" : ""}"`,
         );
       }
 
@@ -334,6 +336,7 @@ export async function runBuddyRequestRound(
   context: BrowserContext,
   settings: Settings,
   apiKey: string,
+  accountId?: string,
 ): Promise<{ requests: number }> {
   const n = settings.neighbor;
   if (!n.buddyRequestEnabled || n.buddyTopicKeywords.length === 0) {
@@ -345,7 +348,7 @@ export async function runBuddyRequestRound(
 
   try {
     for (const topic of n.buddyTopicKeywords) {
-      if (todayCount("buddy-request") >= n.dailyBuddyRequestLimit) break;
+      if (todayCount("buddy-request", accountId) >= n.dailyBuddyRequestLimit) break;
 
       // 블로그 검색 (모바일) — 대상 blogId 수집
       const searchUrl = `https://m.search.naver.com/search.naver?where=m_blog&query=${encodeURIComponent(topic)}`;
@@ -363,8 +366,8 @@ export async function runBuddyRequestRound(
 
       for (const blogId of blogIds) {
         if (shouldStop()) break;
-        if (todayCount("buddy-request") >= n.dailyBuddyRequestLimit) break;
-        if (actedRecently(blogId, "buddy-request", 30)) continue;
+        if (todayCount("buddy-request", accountId) >= n.dailyBuddyRequestLimit) break;
+        if (actedRecently(blogId, "buddy-request", 30, accountId)) continue;
 
         try {
           const message = await generateBuddyMessage(
@@ -375,7 +378,7 @@ export async function runBuddyRequestRound(
             settings.brandName,
           );
           const ok = await sendBuddyRequest(context, blogId, message);
-          logActivity({ action: "buddy-request", targetBlogId: blogId, message, ok });
+          logActivity({ accountId, action: "buddy-request", targetBlogId: blogId, message, ok });
           if (ok) requests++;
           await humanDelay(n.minDelaySec, n.maxDelaySec);
         } catch (err) {

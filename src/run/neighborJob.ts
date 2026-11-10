@@ -33,10 +33,10 @@ export async function runNeighborJob(
       return { ok: false, error: "네이버 로그인 세션이 없습니다. 상세 설정에서 이 계정으로 로그인하세요." };
     }
 
-    const engage = await runNeighborRound(context, settings, apiKey);
+    const engage = await runNeighborRound(context, settings, apiKey, opts.accountId);
     let buddyRequests = 0;
     if (settings.neighbor.buddyRequestEnabled) {
-      const buddy = await runBuddyRequestRound(context, settings, apiKey);
+      const buddy = await runBuddyRequestRound(context, settings, apiKey, opts.accountId);
       buddyRequests = buddy.requests;
     }
 

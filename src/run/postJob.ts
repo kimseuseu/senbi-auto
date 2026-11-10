@@ -1,5 +1,5 @@
 import { getSettings, resolveApiKey, type Settings } from "../config/settings";
-import { crawlBlog, toReferences } from "../crawl/crawler";
+import { crawlBlogCached, toReferences } from "../crawl/crawler";
 import { generateFromReferences, keywordTags } from "../generate";
 import {
   analyzeHeadingStyle,
@@ -10,12 +10,17 @@ import {
 import { assertKeywordAllowed } from "../generate/keywordPool";
 import { loadLearnSource, selectKeywords } from "./keywordPlan";
 import { buildPostAssets } from "./assets";
-import { addDraft, markPublished, type GeneratedDraft } from "../core/drafts";
+import {
+  addDraft,
+  markPublished,
+  reserveDraftKeyword,
+  type GeneratedDraft,
+} from "../core/drafts";
 import { logPublished } from "../core/activity";
 import { markImagesUsed, sourceUrl } from "../core/usedImages";
-import { launchContext, isLoggedIn, closeContext } from "../naver/session";
+import { launchContext, isLoggedIn, closeContext, hasSavedSession } from "../naver/session";
 import { publishPost } from "../naver/publish";
-import { markSessionInvalid, markSessionValid } from "../naver/sessionState";
+import { markSessionInvalid, markSessionValid, getSessionState } from "../naver/sessionState";
 import { createLogger } from "../core/logger";
 
 const log = createLogger("postJob");
@@ -49,6 +54,16 @@ export async function runPostJob(
 
   if (!apiKey) return { ok: false, error: "ANTHROPIC_API_KEY가 없습니다." };
   if (!settings.blogId) return { ok: false, error: "발행 대상 blogId가 설정되지 않았습니다." };
+  // 발행할 수 없는 게 이미 확실하면 글부터 만들지 않는다 (만드는 데 1분 남짓 + AI 비용이 든다)
+  if (settings.autoPublish) {
+    const stale = opts.accountId ? getSessionState(opts.accountId).needsRelogin : false;
+    if (stale || !hasSavedSession(opts.accountId)) {
+      return {
+        ok: false,
+        error: "네이버 로그인이 필요합니다. 상세 설정 → 블로그 계정에서 이 계정으로 로그인해 주세요.",
+      };
+    }
+  }
   // 키워드는 학습 블로그에서 수집하므로 등록 목록이 비어 있어도 된다.
   // (등록 목록은 수동 모드에서 '우선순위'로만 쓰인다)
 
@@ -96,7 +111,8 @@ export async function runPostJob(
         log.warn(
           `유사문서 위험 — 참고글과 겹치는 문장 ${pct}% (재작성해도 안 내려감) → 발행하지 않고 초안만 저장. 예: ${sample}`,
         );
-        const draft = addDraft(result, []);
+        const draft = addDraft(result, [], settings.blogId);
+        reserveDraftKeyword(draft.id); // 사람이 고쳐 올릴 글 — 다음 회차에 같은 키워드를 또 쓰지 않는다
         return {
           ok: true,
           draft,
@@ -116,7 +132,7 @@ export async function runPostJob(
     // 구버전 크롤러로 학습된 템플릿엔 서식 정보가 없다 → 최근 글 몇 개로 스타일만 재분석
     if (!styleProfile.usesStructure && tpl?.blogId) {
       try {
-        const fresh = await crawlBlog(tpl.blogId, { count: 5 });
+        const fresh = await crawlBlogCached(tpl.blogId, { count: 5 });
         const p2 = analyzeHeadingStyle(fresh);
         if (p2.usesStructure) {
           styleProfile = p2;
@@ -178,10 +194,16 @@ export async function runPostJob(
       log.info("구조 판별: 학습 블로그가 소제목/인용구를 쓰지 않음 → 일반 본문");
     }
 
-    const draft = addDraft(result, pa.bodyImages.map((a) => a.path));
+    const draft = addDraft(
+      result,
+      pa.bodyImages.map((a) => a.path),
+      settings.blogId,
+    );
 
     // 5) 발행 여부
     if (!settings.autoPublish) {
+      // 초안만 만드는 모드 — 키워드를 기록해 두지 않으면 돌릴 때마다 같은 키워드로 또 만든다
+      reserveDraftKeyword(draft.id);
       log.info(`자동발행 꺼짐 — 로컬 초안 저장: "${result.title}"`);
       return { ok: true, draft, published: false };
     }
@@ -201,6 +223,7 @@ export async function runPostJob(
       const pub = await publishPost(context, {
         blogId: settings.blogId,
         post: result,
+        summary: settings.aiSummary === false ? undefined : result.summary,
         structuredBody,
         textStyle: publishStyle,
         introStyle: { color: textStyle.introColor, bold: textStyle.introBold },

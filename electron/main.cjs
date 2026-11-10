@@ -10,6 +10,8 @@ const alerts = require("./alerts.cjs");
 const APP_ROOT = path.dirname(__dirname); // senbi-auto/
 const APP_NAME = "senbiPOST";
 const APP_ID = "com.senbi.auto";
+const IS_MAC = process.platform === "darwin";
+const WINDOW_TITLE = IS_MAC ? "" : APP_NAME;
 const FIRST_PORT = Number(process.env.SENBI_AUTO_PORT || 3060);
 
 // 실제로 쓸 포트 — 3060이 막혀 있으면 다음 빈 포트를 찾아 쓴다 (윈도우는 포트 충돌이 흔하다)
@@ -117,7 +119,7 @@ function startEngine() {
  * 다음 실행 때 포트·프로필이 잠긴다 → taskkill 로 트리째 정리한다.
  */
 function stopEngine() {
-  if (!engine || engine.killed) return;
+  if (!engine || engine.killed || engine.exitCode !== null) return;
   if (process.platform === "win32" && engine.pid) {
     try {
       execFile("taskkill", ["/pid", String(engine.pid), "/T", "/F"], () => {});
@@ -127,6 +129,49 @@ function stopEngine() {
     }
   }
   engine.kill();
+}
+
+/** 엔진을 끄고 실제로 끝날 때까지 기다린다 — 윈도우는 파일을 쥔 채면 설치가 덮어쓰지 못한다 */
+function stopEngineAndWait(timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    if (!engine || engine.exitCode !== null || engine.signalCode) return resolve();
+    const t = setTimeout(resolve, timeoutMs);
+    engine.once("exit", () => {
+      clearTimeout(t);
+      // 크로미움 같은 손자 프로세스가 잠금을 풀 시간을 조금 준다
+      setTimeout(resolve, 800);
+    });
+    stopEngine();
+  });
+}
+
+/**
+ * 발행·이웃 작업이 도는 중인지 (업데이트 재시작을 미룰지 판단).
+ * 엔진이 대답을 못 하면 작업 중으로 본다 — 모르는 채로 재시작하는 것보다 기다리는 게 안전하다.
+ */
+function isEngineBusy() {
+  if (!engine || engine.exitCode !== null || engine.signalCode) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: "127.0.0.1", port: PORT, path: "/api/status", timeout: 5000 },
+      (res) => {
+        let raw = "";
+        res.on("data", (d) => (raw += d));
+        res.on("end", () => {
+          try {
+            resolve(Boolean(JSON.parse(raw).running));
+          } catch {
+            resolve(true);
+          }
+        });
+      },
+    );
+    req.on("error", () => resolve(true));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(true);
+    });
+  });
 }
 
 // ---------- 서버가 뜰 때까지 대기 ----------
@@ -154,13 +199,27 @@ function createWindow() {
     height: 820,
     minWidth: 760,
     minHeight: 600,
-    title: APP_NAME,
-    backgroundColor: "#F7F6F2",
+    // 맥은 창 위쪽 제목줄에 글자를 띄우지 않는다 (앱 이름은 메뉴바·독에 이미 있다).
+    // 윈도우는 작업표시줄에서 창을 구분해야 하므로 앱 이름을 둔다.
+    title: WINDOW_TITLE,
+    backgroundColor: "#000000",
+    // 맥: 제목줄을 없애고 신호등 버튼만 앱 헤더 안에 둔다 (화면이 창 맨 위까지 찬다).
+    // 창을 끄는 자리는 화면의 헤더가 맡는다 — index.html 의 .mac-app header 참고.
+    ...(IS_MAC ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 20, y: 23 } } : {}),
     icon: path.join(APP_ROOT, "build", "icon.png"),
     show: false,
-    webPreferences: { contextIsolation: true },
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs") },
   });
 
+  // 화면(HTML)의 <title> 이 제목줄을 덮어쓰지 못하게 막는다
+  win.on("page-title-updated", (e) => e.preventDefault());
+  // 전체 화면에서는 신호등 버튼이 사라진다 → 헤더가 비워 둔 자리를 되돌린다
+  const setFullscreen = (on) =>
+    win.webContents
+      .executeJavaScript(`document.documentElement.classList.toggle("fullscreen", ${on})`)
+      .catch(() => {});
+  win.on("enter-full-screen", () => setFullscreen(true));
+  win.on("leave-full-screen", () => setFullscreen(false));
   win.loadURL(urlOf());
   win.once("ready-to-show", () => win.show());
 
@@ -255,7 +314,15 @@ if (!gotLock) {
     if (PORT !== FIRST_PORT) console.log(`[main] ${FIRST_PORT} 포트가 사용 중 → ${PORT} 사용`);
     startEngine();
     createTray();
-    updater.start();
+    updater.start({
+      isBusy: isEngineBusy,
+      // 업데이트 설치 직전: 엔진을 먼저 정리해 파일 잠금·"엔진 종료" 오류 대화상자를 막는다
+      beforeInstall: async () => {
+        quitting = true;
+        alerts.stop();
+        await stopEngineAndWait();
+      },
+    });
     try {
       await waitForServer();
       createWindow();
@@ -277,12 +344,6 @@ if (!gotLock) {
   app.on("before-quit", () => {
     quitting = true;
     alerts.stop();
-    stopEngine();
-  });
-
-  // 업데이트 설치 직전: 엔진을 먼저 정리해 파일 잠금·오류 대화상자를 막는다
-  app.on("senbi-before-update-install", () => {
-    quitting = true;
     stopEngine();
   });
 

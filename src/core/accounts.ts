@@ -1,6 +1,17 @@
 import fs from "node:fs";
 import { JsonStore } from "../config/store";
-import { getSettings, type NeighborSettings, type Settings } from "../config/settings";
+import {
+  getSettings,
+  isVisibility,
+  cleanNumber,
+  cleanString,
+  cleanStringList,
+  sanitizeNeighborPatch,
+  type NeighborSettings,
+  type Sanitized,
+  type Settings,
+} from "../config/settings";
+import { normalizeBlogId, isValidBlogId, resolveBlogId } from "../crawl/rss";
 import { dataPath, ensureDir } from "../config/paths";
 import type { Visibility } from "../naver/publish";
 import { createLogger } from "./logger";
@@ -75,6 +86,23 @@ export function ensureMigrated(): void {
   log.info(`현재 설정을 계정으로 이관: "${acc.name}" (${acc.blogId})`);
 }
 
+/**
+ * 계정에 적힌 블로그 아이디를 블로그의 실제 주소로 바로잡는다.
+ * 로그인 아이디와 블로그 주소가 다른 계정은 그대로 두면 학습도 겹침 확인도 되지 않는다.
+ * @returns 바로잡은 계정 수
+ */
+export async function fixAccountBlogIds(): Promise<number> {
+  let fixed = 0;
+  for (const acc of listAccounts()) {
+    const real = await resolveBlogId(acc.blogId);
+    if (!real || real === acc.blogId) continue;
+    log.info(`계정 "${acc.name}": 블로그 주소를 ${acc.blogId} → ${real} 로 바로잡음 (로그인 아이디와 주소가 다른 블로그)`);
+    updateAccount(acc.id, { blogId: real });
+    fixed++;
+  }
+  return fixed;
+}
+
 export function listAccounts(): Account[] {
   return store.read().accounts;
 }
@@ -109,12 +137,55 @@ export function addAccount(
   return acc;
 }
 
+/**
+ * 대시보드 API 로 들어온 계정 값 검증 — 모르는 필드는 버리고, 숫자는 범위 안으로 맞춘다.
+ * 블로그 아이디는 세션 폴더 이름에도 쓰이므로 형식이 틀리면 저장 자체를 거부한다.
+ */
+export function sanitizeAccountPatch(input: unknown): Sanitized<Account> {
+  if (!input || typeof input !== "object") return { ok: false, error: "계정 값이 비어 있습니다." };
+  const p = input as Record<string, unknown>;
+  const patch: Partial<Account> = {};
+
+  if (p.blogId !== undefined) {
+    const blogId = typeof p.blogId === "string" ? normalizeBlogId(p.blogId) : "";
+    if (!isValidBlogId(blogId)) {
+      return { ok: false, error: "블로그 아이디 형식이 올바르지 않습니다(영문·숫자·-·_ 만 가능)." };
+    }
+    patch.blogId = blogId;
+  }
+  if (p.postVisibility !== undefined) {
+    if (!isVisibility(p.postVisibility)) {
+      return { ok: false, error: "공개 범위 값이 올바르지 않습니다." };
+    }
+    patch.postVisibility = p.postVisibility;
+  }
+
+  const name = cleanString(p.name, 60);
+  if (name) patch.name = name;
+  const templateId = cleanString(p.templateId, 120);
+  if (templateId !== undefined) patch.templateId = templateId;
+  const postCategory = cleanString(p.postCategory, 60);
+  if (postCategory !== undefined) patch.postCategory = postCategory;
+  const topicKeywords = cleanStringList(p.topicKeywords);
+  if (topicKeywords) patch.topicKeywords = topicKeywords;
+  if (typeof p.autoKeyword === "boolean") patch.autoKeyword = p.autoKeyword;
+  const postsPerRun = cleanNumber(p.postsPerRun, 1, 20);
+  if (postsPerRun !== undefined) patch.postsPerRun = postsPerRun;
+  const postIntervalMin = cleanNumber(p.postIntervalMin, 0, 240);
+  if (postIntervalMin !== undefined) patch.postIntervalMin = postIntervalMin;
+  const neighbor = sanitizeNeighborPatch(p.neighbor);
+  if (neighbor) patch.neighbor = neighbor as NeighborSettings;
+
+  return { ok: true, patch };
+}
+
 export function updateAccount(id: string, patch: Partial<Account>): Account | null {
   store.update((d) => {
     const a = d.accounts.find((x) => x.id === id);
     if (a) {
-      Object.assign(a, patch, { id: a.id, updatedAt: now() });
-      if (patch.neighbor) a.neighbor = { ...a.neighbor, ...patch.neighbor };
+      const { neighbor, ...rest } = patch;
+      Object.assign(a, rest, { id: a.id, updatedAt: now() });
+      if (neighbor) a.neighbor = { ...a.neighbor, ...neighbor };
     }
     return d;
   });

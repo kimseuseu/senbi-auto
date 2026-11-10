@@ -56,6 +56,11 @@ export interface OverlapSummary {
 
 export interface GenerateResult {
   title: string;
+  /**
+   * 글 맨 위에 놓는 핵심 요약 (검색 AI 인용용). 한 줄에 한 문장.
+   * 본문과 달리 학습 블로그 문체를 따르지 않고, 줄바꿈 처리도 하지 않는다.
+   */
+  summary?: string;
   content: string; // 줄바꿈 처리 완료된 최종 본문
   rawContent: string; // 줄바꿈 처리 전 본문
   headings?: string[]; // 섹션 소제목 줄들 (본문과 일치) — 소제목/인용구 재현용
@@ -191,6 +196,8 @@ export type NeighborAction = "comment" | "like" | "buddy-request";
 
 export interface NeighborActivity {
   id: string;
+  /** 어느 계정으로 한 활동인지 (일일 한도·중복 방지는 계정마다 따로 — 예전 기록엔 없다) */
+  accountId?: string;
   action: NeighborAction;
   targetBlogId: string;
   targetLogNo?: string;

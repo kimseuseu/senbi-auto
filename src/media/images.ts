@@ -110,6 +110,37 @@ function outPath(): string {
   return path.join(IMAGE_CACHE_DIR, name);
 }
 
+/**
+ * 오래된 가공 이미지 정리.
+ *
+ * 글을 올릴 때마다 가공본(img_*.jpg · sig_*.png)이 쌓이는데, 올리고 나면 다시 쓰지 않는다.
+ * 앱이 직접 만든 이름의 파일만 지운다 — 사용자가 이 폴더에 넣어 둔 다른 파일은 건드리지 않는다.
+ * @returns 지운 파일 수
+ */
+export function pruneImageCache(maxAgeDays = 30): number {
+  const cutoff = Date.now() - maxAgeDays * 86400_000;
+  let removed = 0;
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(IMAGE_CACHE_DIR);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    if (!/^(img|sig)_\d+_\d+\.(jpg|png)$/.test(name)) continue;
+    const file = path.join(IMAGE_CACHE_DIR, name);
+    try {
+      if (fs.statSync(file).mtimeMs >= cutoff) continue;
+      fs.rmSync(file, { force: true });
+      removed++;
+    } catch {
+      /* 잠긴 파일은 다음 실행 때 다시 시도 */
+    }
+  }
+  if (removed > 0) log.info(`오래된 가공 이미지 ${removed}장 정리 (${maxAgeDays}일 지난 것)`);
+  return removed;
+}
+
 /** 내 이미지 폴더의 이미지 파일 목록 */
 export function listMyImages(): string[] {
   try {

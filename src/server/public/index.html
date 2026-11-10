@@ -21,6 +21,10 @@
 
   header{padding:18px 26px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:20;
     background:rgba(0,0,0,.55);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+  /* 맥 앱: 제목줄이 없다. 헤더 왼쪽에 신호등 버튼 자리를 비우고, 헤더를 잡아 창을 옮긴다 */
+  .mac-app header{padding-left:96px;-webkit-app-region:drag;user-select:none}
+  .mac-app.fullscreen header{padding-left:26px}
+  .mac-app header button,.mac-app header a,.mac-app header input{-webkit-app-region:no-drag}
   .wordmark{display:flex;align-items:center;gap:9px;font-weight:600;letter-spacing:-.01em;font-size:15px}
   .wordmark .ast{font-size:17px;line-height:0;transform:translateY(1px)}
   .badge{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);
@@ -83,12 +87,20 @@
     box-shadow:0 12px 26px rgba(0,0,0,.5)}
   .lg-btn:active{transform:translateY(0) scale(.982)}
   .lg-btn:disabled{cursor:progress;opacity:.9}
-  /* 작업 중 — 유리에 핑크가 감돔 (역시 바깥 글로우 없음) */
-  .lg-btn.working{background:linear-gradient(180deg, rgba(255,105,150,.26) 0%, rgba(240,45,105,.13) 55%, rgba(220,30,90,.09) 100%)}
-  .lg-btn.working:hover{background:linear-gradient(180deg, rgba(255,120,162,.34) 0%, rgba(240,45,105,.18) 55%, rgba(220,30,90,.12) 100%)}
+  /* 작업 중 — 색을 입히지 않고 유리를 한 톤 가라앉힌다. 진행 중이라는 표시는 초록 점 하나로만.
+     (빨강·핑크는 오류 알림과 같은 계열이라 작업이 잘못된 것처럼 보였다) */
+  .lg-btn.working{color:rgba(255,255,255,.88);
+    background:linear-gradient(180deg, rgba(255,255,255,.055) 0%, rgba(255,255,255,.02) 55%, rgba(255,255,255,.01) 100%)}
+  .lg-btn.working:hover{
+    background:linear-gradient(180deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.035) 55%, rgba(255,255,255,.018) 100%)}
+  .lg-btn.working::after{background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.015) 60%, transparent)}
   .lg-btn.working::before{box-shadow:
-      inset 0 1.2px 0 rgba(255,255,255,.9), inset 0 -1.2px 0 rgba(255,190,210,.32),
-      inset 0 0 0 1px rgba(255,175,200,.26)}
+      inset 0 1.2px 0 rgba(255,255,255,.5), inset 0 -1.2px 0 rgba(255,255,255,.14),
+      inset 0 0 0 1px rgba(255,255,255,.12)}
+  .lg-btn.working>span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:99px;
+    background:var(--ok);margin-right:10px;vertical-align:2px;box-shadow:0 0 0 4px rgba(57,217,138,.16)}
+  /* 중지하는 중(버튼 잠김)에는 점을 끈다 — 더는 '진행 중'이 아니다 */
+  .lg-btn.working:disabled>span::before{background:var(--muted);box-shadow:none}
 
   .worklog{font-size:13.5px;color:var(--muted);min-height:20px;font-variant-numeric:tabular-nums}
   .mini{display:flex;gap:22px;color:var(--muted);font-size:13px;flex-wrap:wrap;justify-content:center}
@@ -98,8 +110,94 @@
   .linkbtn:hover{color:var(--text)}
 
   /* ---------- 상세 패널 ---------- */
-  #detailPanel{display:grid;gap:18px;padding-top:8px;animation:fadeUp .3s cubic-bezier(.2,.8,.2,1)}
+  #detailPanel{padding-top:8px;animation:fadeUp .3s cubic-bezier(.2,.8,.2,1)}
   #detailPanel[hidden]{display:none}
+
+  /* ---------- 상세 설정: 왼쪽 목차 + 한 번에 한 화면 ----------
+     예전엔 설정 카드 여덟 장이 한꺼번에 펼쳐져 있었다. 지금 볼 것 하나만 보여 준다.
+     움직임은 transform·opacity 만 쓴다. 들어올 때 220~260ms, 나갈 때는 더 짧게. */
+  .settings{display:grid;grid-template-columns:168px minmax(0,1fr);gap:44px;align-items:start}
+  .snav{position:sticky;top:80px;display:flex;flex-direction:column;gap:2px;padding-left:10px;border-left:1px solid var(--line)}
+  .snav button{appearance:none;background:none;border:0;text-align:left;font:inherit;font-size:14px;color:var(--muted);
+    padding:9px 10px;border-radius:8px;cursor:pointer;transition:color .15s ease}
+  .snav button:hover{color:var(--text)}
+  .snav button[aria-selected="true"]{color:var(--text);font-weight:600}
+  .snav button:focus-visible{outline:2px solid var(--line2);outline-offset:1px}
+  .snav-ind{position:absolute;left:-1px;top:0;width:2px;height:18px;border-radius:2px;background:var(--text);
+    transform:translateY(var(--y,10px));transition:transform .26s cubic-bezier(.645,.045,.355,1)}
+  .spanes{min-width:0;max-width:680px;padding-bottom:40px}
+  .spane[hidden]{display:none}
+  .spane.enter{animation:paneIn .24s cubic-bezier(.23,1,.32,1) both}
+  @keyframes paneIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .stitle{font-size:20px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px}
+  .slead{font-size:13px;color:var(--muted);margin:0;line-height:1.55;max-width:60ch}
+  .ssub{font-size:12.5px;font-weight:600;color:var(--muted);margin:0;padding:22px 0 2px}
+  .sgroup{margin-top:20px;border-top:1px solid var(--line)}
+  .sgroup[hidden]{display:none}
+  .srow{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:14px 0}
+  .srow-text{margin:0;flex:1;min-width:0;cursor:pointer}
+  .srow-text b{display:block;font-size:14.5px;font-weight:600;color:var(--text)}
+  .srow-text span{display:block;font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .srow-text span[hidden]{display:none}
+  .srow .ctl{flex:none;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+  .srow .ctl input[type=number]{width:88px;text-align:right}
+  .srow .ctl select,.srow .ctl input[type=text],.srow .ctl input[type=password]{width:230px}
+  .srow.stack{flex-direction:column;align-items:stretch;gap:8px}
+  .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:2px 14px;padding:6px 0 10px}
+  .fields .wide{grid-column:1/-1}
+
+  /* 켜고 끄는 설정은 스위치로 — 체크박스보다 '지금 켜져 있다'가 한눈에 보인다 */
+  .switch{appearance:none;flex:none;width:42px;height:24px;border-radius:99px;margin:0;cursor:pointer;
+    background:rgba(255,255,255,.14);position:relative;transition:background-color .16s ease}
+  .switch::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;
+    transition:transform .18s cubic-bezier(.23,1,.32,1)}
+  .switch:checked{background:var(--ok)}
+  .switch:checked::after{transform:translateX(18px)}
+  .switch:active::after{transform:scale(.92)}
+  .switch:checked:active::after{transform:translateX(18px) scale(.92)}
+  .switch:disabled{opacity:.4;cursor:not-allowed}
+  .switch:focus-visible{outline:2px solid var(--line2);outline-offset:2px}
+
+  /* 자주 안 건드리는 값은 접어 둔다 */
+  details.more{margin-top:20px;border-top:1px solid var(--line)}
+  details.more>summary{list-style:none;cursor:pointer;padding:15px 0;font-size:13.5px;color:var(--muted);
+    display:flex;align-items:center;gap:10px;transition:color .15s ease}
+  details.more>summary:hover{color:var(--text)}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more>summary::before{content:"";width:6px;height:6px;margin-left:2px;border-right:1.5px solid currentColor;
+    border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .2s cubic-bezier(.23,1,.32,1)}
+  details.more[open]>summary::before{transform:rotate(45deg)}
+  details.more[open]>.more-body{animation:paneIn .22s cubic-bezier(.23,1,.32,1) both}
+
+  .statgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px 24px;margin:20px 0 6px}
+  .statgrid .stat{display:block;padding:0;border:0}
+  .statgrid .stat span{display:block;font-size:12.5px;color:var(--muted)}
+  .statgrid .stat b{display:block;font-size:19px;font-weight:600;letter-spacing:-.01em;margin-top:3px}
+
+  /* 저장하지 않은 변경이 있을 때만 올라오는 저장 막대 */
+  .savebar{position:fixed;left:50%;bottom:22px;z-index:40;display:flex;align-items:center;gap:8px;
+    padding:9px 10px 9px 18px;border-radius:99px;font-size:13.5px;
+    background:rgba(20,20,23,.94);border:1px solid var(--line2);backdrop-filter:blur(12px);box-shadow:0 12px 30px rgba(0,0,0,.5);
+    opacity:0;transform:translate(-50%,12px);pointer-events:none;
+    transition:opacity .16s ease-in,transform .16s ease-in}
+  .savebar.show{opacity:1;transform:translate(-50%,0);pointer-events:auto;
+    transition:opacity .24s cubic-bezier(.23,1,.32,1),transform .24s cubic-bezier(.23,1,.32,1)}
+  .savebar span{margin-right:8px}
+  body.has-savebar .toast{bottom:84px}
+
+  @media(max-width:820px){
+    .settings{grid-template-columns:minmax(0,1fr);gap:20px}
+    .snav{top:57px;z-index:5;flex-direction:row;gap:0;padding:0;border-left:0;border-bottom:1px solid var(--line);
+      overflow-x:auto;scrollbar-width:none;background:rgba(0,0,0,.82);backdrop-filter:blur(12px)}
+    .snav::-webkit-scrollbar{display:none}
+    .snav button{white-space:nowrap;padding:13px 12px;border-radius:0}
+    .snav button[aria-selected="true"]{box-shadow:inset 0 -2px 0 var(--text)}
+    .snav-ind{display:none}
+    .srow{flex-wrap:wrap;gap:10px}
+    .srow .ctl select,.srow .ctl input[type=text],.srow .ctl input[type=password]{width:100%}
+    .srow .ctl:has(select),.srow .ctl:has(input[type=text]),.srow .ctl:has(input[type=password]){flex:1 1 100%}
+    .statgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
   @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
   @media(max-width:820px){.grid2{grid-template-columns:1fr}}
@@ -147,6 +245,29 @@
     color:#ffd9d9;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.3);
     transition:background .15s,border-color .15s}
   .alertbar button:hover{background:rgba(255,107,107,.2);border-color:rgba(255,107,107,.5)}
+  /* 업데이트 배너 — 새 버전을 받는 중·재시작 예정일 때만 (앱 창에서만, 브라우저로 열면 없음) */
+  .updatebar{position:sticky;top:57px;z-index:19;display:none;gap:12px;align-items:center;
+    padding:12px 26px;border-bottom:1px solid rgba(57,217,138,.24);overflow:hidden;
+    background:linear-gradient(180deg,rgba(57,217,138,.10),rgba(57,217,138,.04));
+    backdrop-filter:blur(14px)}
+  .updatebar.show{display:flex;animation:alertIn .22s cubic-bezier(.2,.7,.3,1)}
+  .updatebar .dot{width:7px;height:7px;border-radius:99px;background:var(--ok);flex:none;
+    box-shadow:0 0 0 4px rgba(57,217,138,.15)}
+  .updatebar .body{flex:1;min-width:0}
+  .updatebar .msg{font-size:13.5px;font-weight:600;color:#d6f7e6;font-variant-numeric:tabular-nums}
+  .updatebar .why{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .updatebar .acts{display:flex;gap:8px;flex:none}
+  .updatebar button{font-size:12px;padding:6px 13px;border-radius:99px;cursor:pointer;
+    color:var(--text);background:transparent;border:1px solid var(--line2);
+    transition:background .15s,border-color .15s}
+  .updatebar button:hover{background:rgba(255,255,255,.06)}
+  .updatebar button.primary{color:#d6f7e6;background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.36)}
+  .updatebar button.primary:hover{background:rgba(57,217,138,.22);border-color:rgba(57,217,138,.55)}
+  .updatebar button:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+  .updatebar button:disabled{opacity:.5;cursor:wait}
+  .updatebar .bar{position:absolute;left:0;bottom:0;height:2px;width:100%;background:var(--ok);
+    transform-origin:left;transform:scaleX(0);transition:transform .3s ease-out;opacity:.7}
+  @media(max-width:640px){.updatebar{flex-wrap:wrap;padding:12px 16px}.updatebar .acts{width:100%}}
   .setupbar{position:sticky;top:57px;z-index:19;display:none;gap:12px;align-items:flex-start;
     padding:13px 26px;border-bottom:1px solid var(--line);
     background:rgba(255,255,255,.03);backdrop-filter:blur(14px)}
@@ -181,7 +302,7 @@
   .acct-id{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
   .acct-id b{font-size:14.5px}
   .acct-actions{display:flex;gap:6px;flex-wrap:wrap}
-  .acct-body{padding:2px 14px 14px;border-top:1px solid var(--line)}
+  .acct-body{padding:4px 16px 6px;border-top:1px solid var(--line)}
   .acct-body[hidden]{display:none}
   .acct-est{margin-top:8px}
   .pill.ok{color:#0a0a0a;background:var(--ok);border-color:transparent;font-weight:600}
@@ -220,6 +341,8 @@
   .goal-est .over{color:var(--warn);font-weight:600}
   .goal-start{padding:13px 30px;font-size:15px}
   #goalBack[hidden]{display:none}
+  /* 계정을 등록하면 계정 설정이 대신 쓰이는 칸 — 값이 먹지 않는 칸을 보여 주지 않는다 */
+  [data-legacy][hidden]{display:none!important}
 
   /* ---------- 키워드 고르기 (2단계) ---------- */
   #goalKwBody{max-height:58vh}
@@ -261,6 +384,9 @@
     background:#0a0a0a;color:#fff}
   .chip .noimg{font-size:10.5px;color:var(--warn)}
   .chip.on .noimg{color:#b06a00}
+  /* 이 제품을 마지막으로 올린 때 — 고를 때 참고만 하는 정보라 조용하게 */
+  .chip .ago{font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .chip.on .ago{color:#55555d}
   .kw-tip{font-size:11.5px;color:#5c5c63;margin-top:9px;line-height:1.5}
   .kw-more{appearance:none;background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;padding:8px 0;font-family:inherit;
     text-decoration:underline;text-underline-offset:3px}
@@ -310,6 +436,16 @@
   </div>
 </div>
 
+<div class="updatebar" id="updateBar" role="status" aria-live="polite">
+  <span class="dot"></span>
+  <div class="body">
+    <div class="msg" id="updateMsg"></div>
+    <div class="why" id="updateWhy"></div>
+  </div>
+  <div class="acts" id="updateActs"></div>
+  <span class="bar" id="updateProg"></span>
+</div>
+
 <div class="alertbar" id="alertBar" role="alert" aria-live="assertive">
   <span class="dot"></span>
   <div class="body">
@@ -340,7 +476,7 @@
     <div class="mini">
       <span>공감 <b id="mLikes">0</b></span>
       <span>댓글 <b id="mComments">0</b></span>
-      <span>최근 발행 <b id="mPublished">0</b></span>
+      <span>발행한 글 <b id="mPublished">0</b></span>
       <span id="mApi">API 확인 중</span>
     </div>
     <button class="linkbtn" id="toggleDetail">상세 설정 열기</button>
@@ -348,159 +484,258 @@
 
   <!-- 상세 설정 (기본 숨김) -->
   <div id="detailPanel" hidden>
-  <!-- 상태 -->
-  <div class="card">
-    <h2>오늘 현황</h2>
-    <div class="grid2">
-      <div>
-        <div class="stat"><span>공감</span><b id="stLikes">0 / 0</b></div>
-        <div class="stat"><span>댓글</span><b id="stComments">0 / 0</b></div>
-        <div class="stat"><span>서로이웃 신청</span><b id="stBuddy">0 / 0</b></div>
-      </div>
-      <div>
-        <div class="stat"><span>자동 발행</span><b id="stAutoPublish">-</b></div>
-        <div class="stat"><span>이웃 관리</span><b id="stNbEnabled">-</b></div>
-        <div class="stat"><span>최근 발행</span><b id="stPublished">0건</b></div>
-      </div>
-    </div>
-    <div class="actions">
-      <button class="btn" id="runPost">지금 글 생성 (테스트)</button>
-      <button class="btn ghost" id="runNeighbor">지금 이웃 관리</button>
-    </div>
-    <div class="hint">‘지금 글 생성’은 자동발행이 꺼져 있으면 네이버에 올리지 않고 초안만 만듭니다. 발행·이웃관리는 아래 <b>블로그 계정</b>에서 그 계정으로 로그인해 둬야 동작합니다.</div>
-  </div>
+  <div class="settings">
+    <nav class="snav" id="snav" role="tablist" aria-label="상세 설정" aria-orientation="vertical">
+      <span class="snav-ind" id="snavInd" aria-hidden="true"></span>
+      <button type="button" role="tab" id="tab-status" data-tab="status" aria-controls="pane-status">현황</button>
+      <button type="button" role="tab" id="tab-accounts" data-tab="accounts" aria-controls="pane-accounts">블로그 계정</button>
+      <button type="button" role="tab" id="tab-write" data-tab="write" aria-controls="pane-write">글 설정</button>
+      <button type="button" role="tab" id="tab-neighbor" data-tab="neighbor" aria-controls="pane-neighbor">이웃 관리</button>
+      <button type="button" role="tab" id="tab-learn" data-tab="learn" aria-controls="pane-learn">학습 템플릿</button>
+      <button type="button" role="tab" id="tab-drafts" data-tab="drafts" aria-controls="pane-drafts">초안</button>
+      <button type="button" role="tab" id="tab-ai" data-tab="ai" aria-controls="pane-ai">AI 연결</button>
+    </nav>
 
-  <!-- 실시간 로그 -->
-  <div class="card">
-    <h2>실시간 로그</h2>
-    <div class="loghead">
-      <span class="logdot" id="logDot"></span>
-      <span class="muted" id="logStatus">대기 중</span>
-      <span style="flex:1"></span>
-      <label class="logtoggle"><input type="checkbox" id="logAutoscroll" checked /> 자동 스크롤</label>
-      <button class="btn tiny ghost" id="logClear">지우기</button>
-    </div>
-    <div class="logview" id="logView"><span class="muted">로그를 불러오는 중…</span></div>
-    <div class="hint">글 생성·이미지·발행·이웃 관리의 진행 상황이 실시간으로 쌓입니다. (엔진 메모리 기준 최근 500줄)</div>
-  </div>
+    <div class="spanes">
+      <!-- 현황 -->
+      <section class="spane" id="pane-status" role="tabpanel" aria-labelledby="tab-status">
+        <h2 class="stitle">오늘 현황</h2>
+        <div class="statgrid">
+          <div class="stat"><span>공감</span><b id="stLikes">0 / 0</b></div>
+          <div class="stat"><span>댓글</span><b id="stComments">0 / 0</b></div>
+          <div class="stat"><span>서로이웃 신청</span><b id="stBuddy">0 / 0</b></div>
+          <div class="stat"><span>자동 발행</span><b id="stAutoPublish">-</b></div>
+          <div class="stat"><span>이웃 관리</span><b id="stNbEnabled">-</b></div>
+          <div class="stat"><span>발행한 글</span><b id="stPublished">0건</b></div>
+        </div>
+        <div class="actions" style="margin-top:18px">
+          <button class="btn" id="runPost">지금 글 1편 만들기</button>
+          <button class="btn ghost" id="runNeighbor">지금 이웃 관리</button>
+        </div>
+        <div class="hint">첫 번째 계정으로 바로 실행합니다. 자동 발행이 꺼져 있으면 네이버에 올리지 않고 초안만 만듭니다.</div>
 
-  <!-- 블로그 계정 (다계정) -->
-  <div class="card" id="acctCard">
-    <h2>블로그 계정</h2>
-    <div class="hint">계정마다 다른 네이버 아이디입니다. 각 계정으로 <b>직접 로그인</b>해 세션을 만들어 두세요(비밀번호는 저장하지 않습니다). ‘오늘 작업 시작’을 누르면 작업할 계정을 골라 그 계정으로 발행·이웃관리를 진행합니다. 계정별 <b>발행할 글 수·발행 텀·공개 범위·이웃 관리</b>는 각 계정의 ‘설정’에서 조정합니다.</div>
-    <div id="acctList" style="margin-top:14px"><span class="muted">불러오는 중…</span></div>
-    <div class="acct-add">
-      <input type="text" id="acctNewBlog" placeholder="블로그 아이디 (예: ojs5404)" />
-      <input type="text" id="acctNewName" placeholder="이름 (예: 마니렌탈)" />
-      <button class="btn solid" id="acctAdd">계정 추가</button>
-    </div>
-  </div>
+        <div class="sgroup">
+          <h3 class="ssub">실시간 로그</h3>
+          <div class="loghead" style="margin-top:10px">
+            <span class="logdot" id="logDot"></span>
+            <span class="muted" id="logStatus">대기 중</span>
+            <span style="flex:1"></span>
+            <label class="logtoggle"><input type="checkbox" id="logAutoscroll" checked /> 자동 스크롤</label>
+            <button class="btn tiny ghost" id="logClear">지우기</button>
+          </div>
+          <div class="logview" id="logView"><span class="muted">로그를 불러오는 중…</span></div>
+        </div>
+      </section>
 
-  <div class="grid2">
-    <!-- 글 설정 (공통 기본값) -->
-    <div class="card">
-      <h2>글 생성·발행 공통값</h2>
-      <div class="hint" style="margin:-6px 0 6px">모델·이미지·필터·자동발행 등 <b>모든 계정 공통</b> 기본값입니다. 블로그·키워드·글 수·공개 범위는 위 <b>계정별 설정</b>이 우선합니다.</div>
-      <label>학습 소스 (미리 학습한 템플릿 선택)</label>
-      <select id="activeTemplate"><option value="">직접 크롤 (아래 학습 블로그 사용)</option></select>
-      <div class="hint" id="tplHint"></div>
-      <label>발행 대상 블로그 아이디 (로그인한 계정 — 글이 여기 올라감)</label>
-      <input type="text" id="blogId" placeholder="예: ojs5404" />
-      <label>학습 대상 블로그 아이디 (템플릿 미선택 시 즉석 크롤용)</label>
-      <input type="text" id="learnBlogId" placeholder="예: 내 다른 블로그 아이디" />
-      <label>브랜드/블로그 이름 (자기소개용)</label>
-      <input type="text" id="brandName" placeholder="예: 마니렌탈" />
-      <label>주제 키워드 (쉼표로 구분)</label>
-      <textarea id="topicKeywords" placeholder="이동식도크 대여, 사무용품 렌탈, ..."></textarea>
-      <div class="row">
-        <div><label>글 유형</label>
-          <select id="postType">
-            <option value="info">정보성</option>
-            <option value="review">후기성</option>
-            <option value="product">제품·서비스 소개</option>
-          </select></div>
-        <div><label>크롤 학습 글 수</label><input type="number" id="crawlCount" min="5" max="50" /></div>
-      </div>
-      <div class="row">
-        <div><label>줄바꿈 폭</label><input type="number" id="lineWidth" min="15" max="35" /></div>
-        <div><label>글당 이미지 수</label><input type="number" id="imagesPerPost" min="0" max="10" /></div>
-        <div><label>필터 강도(0~1)</label><input type="number" id="filterStrength" min="0" max="1" step="0.05" /></div>
-      </div>
-      <label>이미지 소스</label>
-      <div class="check"><input type="checkbox" id="src_crawl" /> <span>크롤 이미지 + 약한 필터</span></div>
-      <div class="check"><input type="checkbox" id="src_myFolder" /> <span>내 이미지 폴더 (~/.senbi-auto/my-images)</span></div>
-      <div class="row">
-        <div><label>1회 실행 글 수</label><input type="number" id="postsPerRun" min="1" max="10" /></div>
-      </div>
-      <div class="check"><input type="checkbox" id="autoPublish" /> <span><b>자동 발행</b> (끄면 초안만 생성)</span></div>
-      <label>발행 카테고리 (블로그에 있는 카테고리 이름 그대로 · 비우면 기본 카테고리)</label>
-      <input type="text" id="postCategory" placeholder="예: 공기청정,제습기,배풍기" />
-      <label>자동 발행 공개 범위</label>
-      <select id="postVisibility">
-        <option value="private">비공개 (나만 — 테스트용)</option>
-        <option value="neighbor">이웃공개</option>
-        <option value="both">서로이웃공개</option>
-        <option value="all">전체공개</option>
-      </select>
-      <div class="warn" id="pubWarn" style="display:none">⚠️ 자동 발행이 켜져 있습니다. 공개 범위를 확인하세요. 처음엔 '비공개'로 테스트 후 '전체공개'로 바꾸는 걸 권장합니다.</div>
-    </div>
+      <!-- 블로그 계정 -->
+      <section class="spane" id="pane-accounts" role="tabpanel" aria-labelledby="tab-accounts" hidden>
+        <div id="acctCard">
+          <h2 class="stitle">블로그 계정</h2>
+          <p class="slead">계정마다 직접 로그인해 두면 그 계정으로 글을 올리고 이웃을 관리합니다. 비밀번호는 저장하지 않습니다.</p>
+          <div id="acctList" style="margin-top:18px"><span class="muted">불러오는 중…</span></div>
+          <div class="sgroup">
+            <h3 class="ssub">계정 추가</h3>
+            <div class="acct-add">
+              <input type="text" id="acctNewBlog" placeholder="블로그 아이디 (예: ojs5404)" aria-label="블로그 아이디" />
+              <input type="text" id="acctNewName" placeholder="이름 (예: 마니렌탈)" aria-label="계정 이름" />
+              <button class="btn solid" id="acctAdd">계정 추가</button>
+            </div>
+            <div class="hint">로그인 아이디를 적어도 블로그 주소로 알아서 바꿔 저장합니다.</div>
+          </div>
+        </div>
+      </section>
 
-    <!-- 이웃 설정 -->
-    <div class="card">
-      <h2>이웃 관리 설정</h2>
-      <div class="check"><input type="checkbox" id="nb_enabled" /> <span><b>이웃 관리 사용</b></span></div>
-      <div class="row">
-        <div><label>일일 공감 한도</label><input type="number" id="nb_like" min="0" max="200" /></div>
-        <div><label>일일 댓글 한도</label><input type="number" id="nb_comment" min="0" max="100" /></div>
-      </div>
-      <div class="row">
-        <div><label>최소 간격(초)</label><input type="number" id="nb_min" min="3" max="120" /></div>
-        <div><label>최대 간격(초)</label><input type="number" id="nb_max" min="5" max="300" /></div>
-      </div>
-      <div class="check"><input type="checkbox" id="nb_buddy" /> <span>서로이웃 자동 신청</span></div>
-      <label>서로이웃 대상 키워드 (쉼표)</label>
-      <textarea id="nb_buddyKw" placeholder="캠핑, 낚시, 인테리어 ..."></textarea>
-      <label>일일 서로이웃 신청 한도</label>
-      <input type="number" id="nb_buddyLimit" min="0" max="100" />
-      <div class="hint">간격을 넉넉히, 한도를 보수적으로 잡을수록 계정이 안전합니다.</div>
-    </div>
-  </div>
+      <!-- 글 설정 -->
+      <section class="spane" id="pane-write" role="tabpanel" aria-labelledby="tab-write" hidden>
+        <h2 class="stitle">글 설정</h2>
+        <p class="slead" id="commonHint">모든 계정에 똑같이 적용되는 값입니다.</p>
 
-  <!-- 템플릿 (학습한 블로그) -->
-  <div class="card">
-    <h2>학습 템플릿 (블로그 미리 학습)</h2>
-    <div class="row">
-      <div style="flex:2"><label>학습할 블로그 아이디/URL</label><input type="text" id="tpl_blogId" placeholder="예: khj-1104" /></div>
-      <div style="flex:2"><label>템플릿 이름</label><input type="text" id="tpl_name" placeholder="예: MBC렌탈" /></div>
-      <div><label>글 수</label><input type="number" id="tpl_count" min="5" max="50" value="20" /></div>
-    </div>
-    <div class="actions" style="margin-top:10px"><button class="btn solid" id="tpl_learn">새로 학습</button></div>
-    <div class="hint">학습하면 그 블로그의 글·이미지를 미리 받아 저장하고, 제목에서 키워드를 뽑아둡니다. 생성 시 위 '학습 소스'에서 골라 쓰세요.</div>
-    <div id="tpl_list" style="margin-top:14px"></div>
-  </div>
+        <div class="sgroup">
+          <div class="srow">
+            <label class="srow-text" for="autoPublish"><b>자동 발행</b><span>끄면 네이버에 올리지 않고 초안만 만듭니다.</span></label>
+            <input type="checkbox" class="switch" id="autoPublish" />
+          </div>
+          <div class="warn" id="pubWarn" style="display:none;margin:-4px 0 10px">자동 발행이 켜져 있습니다. 처음에는 공개 범위를 비공개로 두고 확인한 뒤 전체공개로 바꾸기를 권합니다.</div>
+          <div class="srow">
+            <label class="srow-text" for="aiSummary"><b>글 맨 위에 핵심 요약 넣기</b><span>검색 AI가 인용하기 쉬운 3문장을 썸네일보다 위에 둡니다. 이 부분은 학습한 문체를 따르지 않습니다.</span></label>
+            <input type="checkbox" class="switch" id="aiSummary" />
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="keywordReuseDays"><b>같은 키워드 다시 쓰기까지</b><span>10일이면 한 달에 세 번, 15일이면 두 번 올라갑니다. 블로그마다 따로 셉니다.</span></label>
+            <div class="ctl"><input type="number" id="keywordReuseDays" min="0" max="3650" /> 일</div>
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="postType"><b>글 유형</b></label>
+            <div class="ctl"><select id="postType">
+              <option value="info">정보성</option>
+              <option value="review">후기성</option>
+              <option value="product">제품·서비스 소개</option>
+            </select></div>
+          </div>
+        </div>
 
-  <!-- 고급 -->
-  <div class="card">
-    <h2>AI · 키</h2>
-    <div class="row">
-      <div><label>Claude 모델</label>
-        <select id="model">
-          <option value="claude-opus-4-8">Claude Opus 4.8 (권장)</option>
-          <option value="claude-sonnet-5">Claude Sonnet 5 (빠름·절약)</option>
-        </select></div>
-      <div><label>Anthropic API 키 (입력 시에만 갱신)</label><input type="password" id="apiKey" placeholder="sk-ant-..." /></div>
-    </div>
-    <div class="actions" style="margin-top:16px">
-      <button class="btn solid" id="save">설정 저장</button>
-    </div>
-  </div>
+        <div class="sgroup">
+          <h3 class="ssub">학습</h3>
+          <div class="srow">
+            <label class="srow-text" for="learnBlogId"><b>학습할 블로그</b><span>계정에 학습 템플릿을 지정하지 않았을 때 이 블로그의 글을 읽어 옵니다.</span></label>
+            <div class="ctl"><input type="text" id="learnBlogId" placeholder="블로그 아이디" /></div>
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="crawlCount"><b>읽어 올 글 수</b></label>
+            <div class="ctl"><input type="number" id="crawlCount" min="5" max="50" /> 건</div>
+          </div>
+        </div>
 
-  <!-- 초안 -->
-  <div class="card">
-    <h2>생성 초안</h2>
-    <div id="drafts"><span class="muted">아직 초안이 없습니다.</span></div>
+        <!-- 계정을 등록하면 계정 설정이 대신 쓰이는 값 -->
+        <div class="sgroup" data-legacy>
+          <h3 class="ssub">계정을 등록하지 않았을 때 쓰는 값</h3>
+          <div class="fields">
+            <div><label for="blogId">글을 올릴 블로그 아이디</label><input type="text" id="blogId" placeholder="예: ojs5404" /></div>
+            <div><label for="brandName">상호 (글 속 자기소개)</label><input type="text" id="brandName" placeholder="예: 마니렌탈" /></div>
+            <div><label for="activeTemplate">학습 템플릿</label>
+              <select id="activeTemplate"><option value="">직접 읽어 오기 (학습할 블로그 사용)</option></select>
+              <div class="hint" id="tplHint"></div></div>
+            <div><label for="postsPerRun">한 번에 만들 글 수</label><input type="number" id="postsPerRun" min="1" max="20" /></div>
+            <div><label for="postVisibility">공개 범위</label>
+              <select id="postVisibility">
+                <option value="private">비공개 (나만 보기)</option>
+                <option value="neighbor">이웃공개</option>
+                <option value="both">서로이웃공개</option>
+                <option value="all">전체공개</option>
+              </select></div>
+            <div><label for="postCategory">카테고리</label><input type="text" id="postCategory" placeholder="블로그에 있는 이름 그대로" /></div>
+            <div class="wide"><label for="topicKeywords">우선 키워드 (쉼표로 구분)</label><textarea id="topicKeywords" placeholder="이동식도크 대여, 사무용품 렌탈"></textarea></div>
+          </div>
+        </div>
+
+        <details class="more">
+          <summary>사진과 줄바꿈 세부 조정</summary>
+          <div class="more-body">
+            <div class="srow">
+              <label class="srow-text" for="imagesPerPost"><b>글 하나에 넣을 사진</b></label>
+              <div class="ctl"><input type="number" id="imagesPerPost" min="0" max="10" /> 장</div>
+            </div>
+            <div class="srow">
+              <label class="srow-text" for="src_crawl"><b>학습 블로그 사진 쓰기</b><span>원본과 조금 다르게 보이도록 약하게 보정해서 넣습니다.</span></label>
+              <input type="checkbox" class="switch" id="src_crawl" />
+            </div>
+            <div class="srow">
+              <label class="srow-text" for="src_myFolder"><b>내 사진 폴더 먼저 쓰기</b><span>~/.senbi-auto/my-images 에 넣어 둔 사진을 먼저 씁니다.</span></label>
+              <input type="checkbox" class="switch" id="src_myFolder" />
+            </div>
+            <div class="srow">
+              <label class="srow-text" for="filterStrength"><b>사진 보정 강도</b><span>0은 원본 그대로, 1은 가장 강하게. 0.2를 권합니다.</span></label>
+              <div class="ctl"><input type="number" id="filterStrength" min="0" max="1" step="0.05" /></div>
+            </div>
+            <div class="srow">
+              <label class="srow-text" for="lineWidth"><b>줄바꿈 폭</b><span>본문 한 줄에 들어가는 글자 수입니다.</span></label>
+              <div class="ctl"><input type="number" id="lineWidth" min="15" max="35" /> 자</div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- 이웃 관리 -->
+      <section class="spane" id="pane-neighbor" role="tabpanel" aria-labelledby="tab-neighbor" hidden>
+        <h2 class="stitle">이웃 관리</h2>
+        <p class="slead">이웃의 새 글에 공감하고, 글 내용에 맞는 댓글을 남깁니다. 한도는 낮게, 간격은 넉넉하게 잡을수록 계정이 안전합니다.</p>
+
+        <div class="sgroup">
+          <div class="srow">
+            <label class="srow-text" for="nb_enabled"><b>이웃 관리 사용</b><span id="nbScopeHint" hidden>계정을 등록한 뒤로는 블로그 계정의 설정에서 계정마다 켜고 끕니다.</span></label>
+            <input type="checkbox" class="switch" id="nb_enabled" />
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="nb_like"><b>하루 공감 한도</b></label>
+            <div class="ctl"><input type="number" id="nb_like" min="0" max="200" /> 건</div>
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="nb_comment"><b>하루 댓글 한도</b></label>
+            <div class="ctl"><input type="number" id="nb_comment" min="0" max="100" /> 건</div>
+          </div>
+        </div>
+
+        <div class="sgroup">
+          <h3 class="ssub">서로이웃 신청</h3>
+          <div class="srow">
+            <label class="srow-text" for="nb_buddy"><b>서로이웃 자동 신청</b><span>아래 키워드로 블로그를 찾아 신청합니다.</span></label>
+            <input type="checkbox" class="switch" id="nb_buddy" />
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="nb_buddyLimit"><b>하루 신청 한도</b></label>
+            <div class="ctl"><input type="number" id="nb_buddyLimit" min="0" max="100" /> 건</div>
+          </div>
+          <div class="srow stack">
+            <label class="srow-text" for="nb_buddyKw"><b>찾을 키워드</b><span>쉼표로 구분합니다.</span></label>
+            <textarea id="nb_buddyKw" placeholder="캠핑, 낚시, 인테리어"></textarea>
+          </div>
+        </div>
+
+        <details class="more">
+          <summary>동작 간격 세부 조정</summary>
+          <div class="more-body">
+            <div class="srow">
+              <label class="srow-text" for="nb_min"><b>가장 짧은 간격</b><span>글 하나를 처리하고 다음 글로 넘어가기까지 쉬는 시간입니다.</span></label>
+              <div class="ctl"><input type="number" id="nb_min" min="3" max="120" /> 초</div>
+            </div>
+            <div class="srow">
+              <label class="srow-text" for="nb_max"><b>가장 긴 간격</b></label>
+              <div class="ctl"><input type="number" id="nb_max" min="5" max="300" /> 초</div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- 학습 템플릿 -->
+      <section class="spane" id="pane-learn" role="tabpanel" aria-labelledby="tab-learn" hidden>
+        <h2 class="stitle">학습 템플릿</h2>
+        <p class="slead">블로그의 글과 사진을 미리 받아 둡니다. 받아 둔 템플릿은 블로그 계정의 설정에서 계정마다 고릅니다.</p>
+        <div id="tpl_list" style="margin-top:18px"></div>
+        <div class="sgroup">
+          <h3 class="ssub">새로 학습</h3>
+          <div class="fields">
+            <div><label for="tpl_blogId">블로그 아이디 또는 주소</label><input type="text" id="tpl_blogId" placeholder="예: khj-1104" /></div>
+            <div><label for="tpl_name">템플릿 이름</label><input type="text" id="tpl_name" placeholder="예: MBC렌탈" /></div>
+            <div><label for="tpl_count">읽어 올 글 수</label><input type="number" id="tpl_count" min="5" max="50" value="20" /></div>
+          </div>
+          <div class="actions"><button class="btn solid" id="tpl_learn">새로 학습</button></div>
+        </div>
+      </section>
+
+      <!-- 초안 -->
+      <section class="spane" id="pane-drafts" role="tabpanel" aria-labelledby="tab-drafts" hidden>
+        <h2 class="stitle">초안</h2>
+        <p class="slead">만든 글이 여기에 남습니다. 누르면 내용을 볼 수 있습니다.</p>
+        <div id="drafts" style="margin-top:18px"><span class="muted">아직 만든 글이 없습니다. 메인 화면에서 작업을 시작하면 여기에 쌓입니다.</span></div>
+      </section>
+
+      <!-- AI 연결 -->
+      <section class="spane" id="pane-ai" role="tabpanel" aria-labelledby="tab-ai" hidden>
+        <h2 class="stitle">AI 연결</h2>
+        <p class="slead">글과 댓글을 쓰는 AI를 고릅니다.</p>
+        <div class="sgroup">
+          <div class="srow">
+            <label class="srow-text" for="model"><b>모델</b><span>Opus는 글 품질이 좋고, Sonnet은 빠르고 비용이 적게 듭니다.</span></label>
+            <div class="ctl"><select id="model">
+              <option value="claude-opus-4-8">Claude Opus 4.8 (권장)</option>
+              <option value="claude-sonnet-5">Claude Sonnet 5</option>
+            </select></div>
+          </div>
+          <div class="srow">
+            <label class="srow-text" for="apiKey"><b>API 키</b><span>새 키를 넣을 때만 적으세요. 비워 두면 지금 키를 그대로 씁니다.</span></label>
+            <div class="ctl"><input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" /></div>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
   </div><!-- /detailPanel -->
+
+  <div class="savebar" id="saveBar" role="region" aria-label="저장하지 않은 변경">
+    <span>저장하지 않은 변경이 있습니다</span>
+    <button class="btn tiny ghost" id="revert" type="button">되돌리기</button>
+    <button class="btn tiny solid" id="save" type="button">저장</button>
+  </div>
 </main>
 
 <div class="toast" id="toast"></div>
@@ -528,13 +763,47 @@
 </dialog>
 
 <script>
+// 맥용 데스크톱 앱 안에서 열렸는지 (브라우저로 열었을 때는 제목줄이 따로 있으니 그대로 둔다)
+if(/Electron/.test(navigator.userAgent) && /Mac/i.test(navigator.userAgent)) document.documentElement.classList.add("mac-app");
 const $ = (id) => document.getElementById(id);
 // 유리 버튼은 내부 <span>에 글자가 들어간다 (스페큘러 레이어 위로 올리기 위함)
 function btnLabel(btn, text){ const s = btn.querySelector("span"); if(s) s.textContent = text; else btn.textContent = text; }
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),3500); }
 
+// 설정을 화면에 채우기 전에는 저장하지 않는다 — 빈 칸이 그대로 저장돼 설정이 지워지는 것을 막는다
+let _settingsLoaded=false;
+// 작업을 시작할 때마다 설정을 통째로 다시 저장하던 것을, 화면에서 손댄 게 있을 때만 저장한다
+let _settingsDirty=false;
+// 저장 막대는 '바꾼 게 있고 상세 설정이 열려 있을 때'만 올라온다
+function setDirty(v){
+  _settingsDirty=v;
+  const show=v && !$("detailPanel").hidden;
+  $("saveBar").classList.toggle("show",show);
+  document.body.classList.toggle("has-savebar",show);
+  $("save").tabIndex=$("revert").tabIndex=show?0:-1;
+}
+const SETTING_IDS=new Set(["blogId","learnBlogId","activeTemplate","brandName","topicKeywords","postType","crawlCount",
+  "lineWidth","imagesPerPost","filterStrength","src_crawl","src_myFolder","postsPerRun","keywordReuseDays","aiSummary","autoPublish",
+  "postVisibility","postCategory","model","apiKey","nb_enabled","nb_like","nb_comment","nb_min","nb_max","nb_buddy","nb_buddyKw","nb_buddyLimit"]);
+function markDirty(e){ if(e.target&&SETTING_IDS.has(e.target.id)) setDirty(true); }
+document.addEventListener("input",markDirty); document.addEventListener("change",markDirty);
+// JSON 응답을 읽되, 서버가 거절했으면(4xx·5xx) 그 사유를 오류로 던진다
+async function api(url,opts){
+  const res=await fetch(url,opts);
+  let data=null; try{ data=await res.json(); }catch(e){}
+  if(!res.ok) throw new Error((data&&data.error)||`요청이 실패했습니다 (${res.status})`);
+  return data;
+}
+function postJson(url,body){ return api(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body??{})}); }
+async function saveSettingsFromForm(force){
+  if(!_settingsLoaded) return;
+  if(!force && !_settingsDirty) return;
+  await postJson("/api/settings",collect());
+  $("apiKey").value=""; setDirty(false);
+}
+
 async function loadSettings(){
-  const s = await (await fetch("/api/settings")).json();
+  const s = await api("/api/settings");
   $("blogId").value=s.blogId||""; $("learnBlogId").value=s.learnBlogId||""; $("brandName").value=s.brandName||"";
   window._activeTpl=s.activeTemplateId||"";
   $("topicKeywords").value=(s.topicKeywords||[]).join(", ");
@@ -544,9 +813,14 @@ async function loadSettings(){
   $("src_crawl").checked=(s.imageSources||[]).includes("crawl");
   $("src_myFolder").checked=(s.imageSources||[]).includes("myFolder");
   $("postsPerRun").value=s.postsPerRun??1;
+  $("keywordReuseDays").value=s.keywordReuseDays??10;
+  $("aiSummary").checked=s.aiSummary!==false;
   $("autoPublish").checked=!!s.autoPublish; $("pubWarn").style.display=s.autoPublish?"block":"none";
   $("postVisibility").value=s.postVisibility||"private"; $("postCategory").value=s.postCategory||"";
-  $("model").value=s.model||"claude-opus-4-8";
+  // 목록에 없는 모델이 저장돼 있으면 그 값을 선택지로 추가한다 (안 그러면 빈 값으로 덮어쓴다)
+  const model=s.model||"claude-opus-4-8";
+  if(![...$("model").options].some(o=>o.value===model)) $("model").add(new Option(model,model));
+  $("model").value=model;
   const n=s.neighbor||{};
   $("nb_enabled").checked=!!n.enabled;
   $("nb_like").value=n.dailyLikeLimit??50; $("nb_comment").value=n.dailyCommentLimit??20;
@@ -554,6 +828,7 @@ async function loadSettings(){
   $("nb_buddy").checked=!!n.buddyRequestEnabled; $("nb_buddyKw").value=(n.buddyTopicKeywords||[]).join(", ");
   $("nb_buddyLimit").value=n.dailyBuddyRequestLimit??30;
   $("apiState").textContent = s._hasApiKey ? (s._apiKeyFromEnv? "API 키: .env ✅":"API 키: 저장됨 ✅") : "API 키 없음 ⚠️";
+  _settingsLoaded=true; setDirty(false);
 }
 
 function collect(){
@@ -564,7 +839,7 @@ function collect(){
     topicKeywords:csv($("topicKeywords").value), postType:$("postType").value,
     crawlCount:+$("crawlCount").value, lineWidth:+$("lineWidth").value,
     imagesPerPost:+$("imagesPerPost").value, filterStrength:+$("filterStrength").value,
-    imageSources:src, postsPerRun:+$("postsPerRun").value,
+    imageSources:src, postsPerRun:+$("postsPerRun").value, keywordReuseDays:+$("keywordReuseDays").value, aiSummary:$("aiSummary").checked,
     autoPublish:$("autoPublish").checked, postVisibility:$("postVisibility").value,
     postCategory:$("postCategory").value.trim(), model:$("model").value,
     neighbor:{
@@ -580,20 +855,21 @@ function collect(){
 }
 
 $("save").onclick=async()=>{
-  await fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collect())});
-  $("apiKey").value=""; toast("설정 저장됨"); loadSettings(); loadStatus();
+  if(!_settingsLoaded){ toast("설정을 아직 불러오지 못했습니다. 잠시 뒤 다시 저장하세요."); return; }
+  try{ await saveSettingsFromForm(true); toast("설정 저장됨"); loadSettings(); loadStatus(); }
+  catch(e){ toast("설정을 저장하지 못했습니다: "+e.message); }
 };
+$("revert").onclick=async()=>{ try{ await loadSettings(); toast("바꾸기 전으로 되돌렸습니다"); }catch(e){ toast("되돌리지 못했습니다: "+e.message); } };
 $("autoPublish").onchange=()=>{ $("pubWarn").style.display=$("autoPublish").checked?"block":"none"; };
 
 async function runJob(url,btn){
   btn.disabled=true; const old=btn.textContent; btn.textContent="실행 중…";
   try{
     // 현재 화면 설정을 먼저 저장 (체크박스만 켜고 저장 안 한 실수 방지)
-    await fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collect())});
-    $("apiKey").value="";
-    const r=await (await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({headless:true})})).json();
+    await saveSettingsFromForm();
+    const r=await postJson(url,{headless:true});
     toast(r.message||"완료"); loadDrafts(); loadStatus(); loadSettings();
-  }catch(e){ toast("실패: "+e); }
+  }catch(e){ toast("실패: "+e.message); }
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 $("runPost").onclick=(e)=>runJob("/api/run/post",e.target);
@@ -606,33 +882,75 @@ $("runAll").onclick=async()=>{
   // 작업 중이면 중지
   if(_working){
     $("runAll").disabled=true; btnLabel($("runAll"),"중지 중…"); $("worklog").textContent="안전하게 중지하는 중…";
-    await fetch("/api/run/stop",{method:"POST"}).catch(()=>{});
+    await postJson("/api/run/stop",{}).catch(()=>{});
     toast("작업을 안전하게 중지합니다 (현재 단계 마무리 후 멈춤)");
     return;
   }
   // 계정이 있으면 작업 목표(블로그 선택) 모달을 먼저 연다
   if(_accounts.length){ openGoalModal(); return; }
   // 레거시: 계정 미등록 — 즉시 실행
-  await fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collect())}).catch(()=>{});
-  $("apiKey").value="";
+  await saveSettingsFromForm().catch(()=>{});
   $("worklog").textContent="발행·이웃 관리 진행 중"; setWorking(true); fastPoll();
   try{
-    const r=await (await fetch("/api/run/all",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({headless:true})})).json();
+    const r=await postJson("/api/run/all",{headless:true});
     $("worklog").textContent=r.message||"완료"; toast(r.message||"오늘 작업 완료");
-  }catch(err){ $("worklog").textContent="실패: "+err; toast("실패: "+err); }
+  }catch(err){ $("worklog").textContent="실패: "+err.message; toast("실패: "+err.message); }
   finally{ await loadStatus(); loadDrafts(); }
 };
 
-// ---------- 상세 설정 토글 ----------
+// ---------- 상세 설정: 열고 닫기 · 목차 ----------
+const TAB_KEY="senbi.settingsTab";
+function tabButtons(){ return [...$("snav").querySelectorAll("[data-tab]")]; }
+// 목차 옆 표시선을 지금 고른 항목 옆으로 옮긴다 (transform 만 움직인다)
+function moveTabIndicator(){
+  const on=$("snav").querySelector('[aria-selected="true"]');
+  if(!on) return;
+  $("snavInd").style.setProperty("--y",(on.offsetTop+(on.offsetHeight-18)/2)+"px");
+}
+function showTab(name,opts){
+  const btns=tabButtons();
+  const target=btns.find(b=>b.dataset.tab===name)||btns[0];
+  for(const b of btns){
+    const on=b===target;
+    b.setAttribute("aria-selected",on?"true":"false");
+    b.tabIndex=on?0:-1;
+    const pane=$("pane-"+b.dataset.tab);
+    const was=!pane.hidden;
+    pane.hidden=!on;
+    pane.classList.toggle("enter",on && !was); // 새로 나타나는 화면만 살짝 올라오며 나타난다
+  }
+  moveTabIndicator();
+  try{ localStorage.setItem(TAB_KEY,target.dataset.tab); }catch(e){}
+  if(opts&&opts.focus) target.focus();
+  if(target.dataset.tab==="status") startLogPolling();
+}
+$("snav").addEventListener("click",(e)=>{ const b=e.target.closest("[data-tab]"); if(b) showTab(b.dataset.tab); });
+$("snav").addEventListener("keydown",(e)=>{
+  const keys={ArrowDown:1,ArrowRight:1,ArrowUp:-1,ArrowLeft:-1};
+  if(!(e.key in keys) && e.key!=="Home" && e.key!=="End") return;
+  const btns=tabButtons(), at=btns.indexOf(document.activeElement);
+  if(at<0) return;
+  e.preventDefault();
+  const next=e.key==="Home"?0:e.key==="End"?btns.length-1:(at+keys[e.key]+btns.length)%btns.length;
+  showTab(btns[next].dataset.tab,{focus:true});
+});
+window.addEventListener("resize",moveTabIndicator);
+
 $("toggleDetail").onclick=()=>{
   const p=$("detailPanel"), open=p.hidden;
   p.hidden=!open;
   $("toggleDetail").textContent=open?"상세 설정 닫기":"상세 설정 열기";
-  if(open){ startLogPolling(); requestAnimationFrame(()=>p.scrollIntoView({behavior:"smooth",block:"start"})); }
+  setDirty(_settingsDirty); // 닫으면 저장 막대도 내린다 (바꾼 값은 남아 있다)
+  if(open){
+    let saved=""; try{ saved=localStorage.getItem(TAB_KEY)||""; }catch(e){}
+    showTab(saved||"status");
+    requestAnimationFrame(()=>{ moveTabIndicator(); p.scrollIntoView({behavior:"smooth",block:"start"}); });
+  }
 };
 
 async function loadStatus(){
-  const s=await (await fetch("/api/status")).json();
+  let s;
+  try{ s=await api("/api/status"); }catch(e){ return; } // 엔진이 잠깐 응답하지 않으면 다음 주기에 다시 읽는다
   $("runBadge").textContent=s.running?"작업 중":"대기"; $("runBadge").className="badge"+(s.running?" on":"");
   $("pubBadge").textContent="자동발행 "+(s.autoPublish?"ON":"OFF"); $("pubBadge").className="badge"+(s.autoPublish?" on":"");
   $("nbBadge").textContent="이웃관리 "+(s.neighborEnabled?"ON":"OFF"); $("nbBadge").className="badge"+(s.neighborEnabled?" on":"");
@@ -640,11 +958,21 @@ async function loadStatus(){
   $("stLikes").textContent=`${s.today.likes} / ${s.limits.likes}`;
   $("stComments").textContent=`${s.today.comments} / ${s.limits.comments}`;
   $("stBuddy").textContent=`${s.today.buddyRequests} / ${s.limits.buddyRequests}`;
-  $("stAutoPublish").textContent=s.autoPublish?"켜짐":"꺼짐 (초안만)"; $("stNbEnabled").textContent=s.neighborEnabled?"사용":"미사용";
-  $("stPublished").textContent=(s.published?.length||0)+"건";
+  $("stAutoPublish").textContent=s.autoPublish?"켜짐":"꺼짐 (초안만)";
+  const nbOn=s.neighborAccounts||[];
+  $("stNbEnabled").textContent=!s.neighborEnabled?"미사용":(nbOn.length?`사용 (${nbOn.join(", ")})`:"사용");
+  const total=s.publishedTotal??(s.published?.length||0);
+  $("stPublished").textContent=total+"건";
+  // 계정이 있으면 이웃 관리는 계정별로 켠다 — 전역 스위치는 잠그고 어디서 바꾸는지 알려 준다
+  const perAccount=(s.accountCount||0)>0;
+  $("nb_enabled").disabled=perAccount; $("nbScopeHint").hidden=!perAccount;
+  document.querySelectorAll("[data-legacy]").forEach(el=>{ el.hidden=perAccount; });
+  $("commonHint").innerHTML=perAccount
+    ? "모든 계정에 똑같이 적용되는 값입니다. 글 수, 공개 범위, 카테고리, 학습 템플릿은 <b>블로그 계정</b>에서 계정마다 정합니다."
+    : "모든 계정에 똑같이 적용되는 값입니다.";
   // 메인 뷰
   $("mLikes").textContent=s.today.likes; $("mComments").textContent=s.today.comments;
-  $("mPublished").textContent=(s.published?.length||0);
+  $("mPublished").textContent=total;
   if("hasApiKey" in s){ $("mApi").textContent = s.hasApiKey ? "API 연결됨" : "API 키 없음"; }
   setWorking(!!s.running, !!s.stopRequested);
   renderAlerts(s.alerts||[]);
@@ -674,9 +1002,65 @@ function renderAlerts(list){
 }
 $("alertAck").onclick=async()=>{
   $("alertBar").classList.remove("show"); _alertShown="";
-  await fetch("/api/alerts/read",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  await postJson("/api/alerts/read",{}).catch(()=>{});
   loadStatus();
 };
+
+// ---------- 자동 업데이트 (앱 창에서만 — preload 가 window.senbiApp 을 넣어 준다) ----------
+const _upd = window.senbiApp?.update;
+let _updState=null, _updTick=null;
+function updBtn(label, fn, primary){
+  const b=document.createElement("button"); b.type="button"; b.textContent=label;
+  if(primary) b.className="primary";
+  b.onclick=async()=>{ b.disabled=true; try{ await fn(); } finally{ b.disabled=false; } };
+  return b;
+}
+function renderUpdate(){
+  const s=_updState, bar=$("updateBar");
+  clearInterval(_updTick); _updTick=null;
+  const v=s?.version?`v${s.version}`:"새 버전";
+  const acts=$("updateActs"); acts.replaceChildren();
+  const prog=$("updateProg"); prog.style.transform="scaleX(0)";
+  const set=(msg,why)=>{ $("updateMsg").textContent=msg; $("updateWhy").textContent=why; bar.classList.add("show"); };
+  switch(s?.phase){
+    case "downloading":
+      set(`새 버전 ${v} 받는 중 · ${s.percent??0}%`, "받는 동안에도 작업은 그대로 진행됩니다.");
+      prog.style.transform=`scaleX(${(s.percent??0)/100})`;
+      return;
+    case "countdown": {
+      const draw=()=>{
+        const sec=Math.max(0,Math.ceil((s.applyAt-Date.now())/1000));
+        $("updateMsg").textContent=`${v} 적용을 위해 ${sec}초 뒤 재시작합니다`;
+      };
+      set("", "설정·계정·발행 기록은 그대로 남습니다.");
+      draw(); _updTick=setInterval(draw,1000);
+      acts.append(updBtn("지금 재시작",()=>_upd.installNow(),true), updBtn("30분 미루기",()=>_upd.postpone()));
+      return;
+    }
+    case "waiting-job":
+      set(`작업이 끝나면 ${v}로 재시작합니다`, "진행 중인 발행·이웃 관리는 끝까지 마친 뒤에 적용합니다.");
+      return;
+    case "postponed": {
+      const at=new Date(s.applyAt).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+      set(`${v} 적용을 미뤘습니다`, `${at}에 재시작합니다. 그때 작업 중이면 끝난 뒤에 합니다.`);
+      acts.append(updBtn("지금 재시작",()=>_upd.installNow(),true));
+      return;
+    }
+    case "installing":
+      set(`${v} 설치 중`, "잠시 뒤 앱이 새 버전으로 다시 열립니다.");
+      return;
+    case "available":
+      set(`새 버전 ${v}가 나왔습니다`, "다운로드 페이지에서 새 dmg를 받아 응용 프로그램 폴더에 덮어써 주세요.");
+      acts.append(updBtn("다운로드 페이지 열기",()=>_upd.openDownload(),true));
+      return;
+    default:
+      bar.classList.remove("show");
+  }
+}
+if(_upd){
+  _upd.onChange(st=>{ _updState=st; renderUpdate(); });
+  _upd.get().then(st=>{ if(st){ _updState=st; renderUpdate(); } }).catch(()=>{});
+}
 
 let _working=false;
 function setWorking(on,stopping){
@@ -712,7 +1096,9 @@ async function loadDrafts(){
   </div>`).join("");
   el.querySelectorAll(".draft").forEach(node=>node.onclick=async()=>{
     const x=await (await fetch("/api/drafts/"+node.dataset.id)).json();
-    $("dmTitle").textContent=x.title; $("dmBody").textContent=x.content; $("draftModal").showModal();
+    $("dmTitle").textContent=x.title;
+    $("dmBody").textContent=(x.summary?`[글 맨 위 핵심 요약]\n${x.summary}\n\n────────\n\n`:"")+x.content;
+    $("draftModal").showModal();
   });
 }
 // 따옴표까지 escape 한다 — 속성값 안에도 쓰이기 때문(data-kw, value 등). 안 하면 따옴표 든 키워드가 속성을 깨뜨린다.
@@ -743,9 +1129,9 @@ async function loadTemplates(){
       <button class="btn ghost" data-inst-save="${t.id}">지침 저장</button>
       <button class="btn ghost" data-del="${t.id}">삭제</button>
     </div></div>`).join("");
-  el.querySelectorAll("[data-more]").forEach(b=>b.onclick=async()=>{ b.disabled=true;b.textContent="학습 중…"; const r=await (await fetch(`/api/templates/${b.dataset.more}/learn-more`,{method:"POST"})).json(); toast(r.ok?`추가 학습 완료 (글 ${r.postCount})`:"실패"); loadTemplates(); });
-  el.querySelectorAll("[data-inst-save]").forEach(b=>b.onclick=async()=>{ const ta=el.querySelector(`[data-inst="${b.dataset.instSave}"]`); await fetch(`/api/templates/${b.dataset.instSave}/instructions`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({instructions:ta.value})}); toast("지침 저장됨"); });
-  el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ if(!confirm("이 템플릿을 삭제할까요?"))return; await fetch(`/api/templates/${b.dataset.del}`,{method:"DELETE"}); toast("삭제됨"); loadTemplates(); });
+  el.querySelectorAll("[data-more]").forEach(b=>b.onclick=async()=>{ b.disabled=true;b.textContent="학습 중…"; try{ const r=await api(`/api/templates/${encodeURIComponent(b.dataset.more)}/learn-more`,{method:"POST"}); toast(`추가 학습 완료 (글 ${r.postCount})`); }catch(e){ toast("추가 학습 실패: "+e.message); } loadTemplates(); });
+  el.querySelectorAll("[data-inst-save]").forEach(b=>b.onclick=async()=>{ const ta=el.querySelector(`[data-inst="${b.dataset.instSave}"]`); try{ await postJson(`/api/templates/${encodeURIComponent(b.dataset.instSave)}/instructions`,{instructions:ta.value}); toast("지침 저장됨"); }catch(e){ toast("지침을 저장하지 못했습니다: "+e.message); } });
+  el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ if(!confirm("이 템플릿을 삭제할까요?"))return; try{ await api(`/api/templates/${encodeURIComponent(b.dataset.del)}`,{method:"DELETE"}); toast("삭제됨"); }catch(e){ toast("삭제하지 못했습니다: "+e.message); } loadTemplates(); });
 }
 function updateTplHint(){
   const t=_templates.find(x=>x.id===$("activeTemplate").value);
@@ -753,15 +1139,15 @@ function updateTplHint(){
 }
 $("activeTemplate").onchange=()=>{
   const t=_templates.find(x=>x.id===$("activeTemplate").value);
-  if(t) $("topicKeywords").value=t.keywords.join(", "); // 템플릿 키워드 자동 선택
+  if(t){ $("topicKeywords").value=t.keywords.join(", "); setDirty(true); } // 템플릿 키워드 자동 선택
   updateTplHint();
 };
 $("tpl_learn").onclick=async(e)=>{
   const blogId=$("tpl_blogId").value.trim(); if(!blogId){toast("블로그 아이디 입력");return;}
   const btn=e.target; btn.disabled=true; btn.textContent="학습 중… (1~2분)";
-  try{ const r=await (await fetch("/api/templates/learn",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({blogId,name:$("tpl_name").value,count:+$("tpl_count").value})})).json();
-    if(r.error){toast("실패: "+r.error);} else {toast(`학습 완료: 글 ${r.postCount}·이미지 ${r.imageCount}·키워드 ${r.keywords.length}`); $("tpl_blogId").value="";$("tpl_name").value=""; loadTemplates();}
-  }catch(err){toast("실패: "+err);} finally{ btn.disabled=false; btn.textContent="새로 학습"; }
+  try{ const r=await postJson("/api/templates/learn",{blogId,name:$("tpl_name").value,count:+$("tpl_count").value});
+    toast(`학습 완료: 글 ${r.postCount}·이미지 ${r.imageCount}·키워드 ${r.keywords.length}`); $("tpl_blogId").value="";$("tpl_name").value=""; loadTemplates();
+  }catch(err){toast("학습 실패: "+err.message);} finally{ btn.disabled=false; btn.textContent="새로 학습"; }
 };
 
 // ---------- 블로그 계정 (다계정) ----------
@@ -776,11 +1162,11 @@ function estMinutes(a){
   return Math.round(m);
 }
 function tplOptions(selId){
-  return ['<option value="">직접 크롤 (공통 학습 블로그)</option>']
+  return ['<option value="">글 설정의 학습할 블로그</option>']
     .concat(_templates.map(t=>`<option value="${t.id}"${t.id===selId?' selected':''}>${escapeHtml(t.name)} (키워드 ${t.keywords.length})</option>`)).join("");
 }
 function visOptions(v){
-  return [["private","비공개(테스트)"],["neighbor","이웃공개"],["both","서로이웃공개"],["all","전체공개"]]
+  return [["private","비공개 (나만 보기)"],["neighbor","이웃공개"],["both","서로이웃공개"],["all","전체공개"]]
     .map(([val,lab])=>`<option value="${val}"${val===v?' selected':''}>${lab}</option>`).join("");
 }
 function collectAcct(node){
@@ -817,22 +1203,42 @@ function renderAccounts(){
         </div>
       </div>
       <div class="acct-body" hidden>
-        <div class="row">
-          <div><label>학습 템플릿</label><select data-f="templateId">${tplOptions(a.templateId)}</select></div>
-          <div><label>공개 범위</label><select data-f="postVisibility">${visOptions(a.postVisibility)}</select></div>
+        <div class="srow">
+          <span class="srow-text"><b>학습 템플릿</b><span>이 계정이 문체와 사진, 키워드를 배울 블로그입니다.</span></span>
+          <div class="ctl"><select data-f="templateId" aria-label="학습 템플릿">${tplOptions(a.templateId)}</select></div>
         </div>
-        <label>발행 카테고리 (블로그에 있는 카테고리 이름 그대로 · 비우면 기본 카테고리)</label>
-        <input type="text" data-f="postCategory" value="${escapeHtml(a.postCategory||"")}" placeholder="예: 공기청정,제습기,배풍기" />
-        <div class="check"><input type="checkbox" data-f="autoKeyword"${a.autoKeyword!==false?' checked':''}> <span><b>주제 자동 선정</b> — 이 블로그 최근 20개 글을 보고 안 겹치는 새 주제를 AI가 정함</span></div>
-        <label>주제 키워드 (쉼표 · 자동 선정이 꺼져 있거나 실패할 때 사용)</label>
-        <textarea data-f="topicKeywords">${escapeHtml((a.topicKeywords||[]).join(", "))}</textarea>
-        <div class="row">
-          <div><label>발행할 글 수</label><input type="number" data-f="postsPerRun" min="1" max="20" value="${a.postsPerRun}"></div>
-          <div><label>발행 텀 (분)</label><input type="number" data-f="postIntervalMin" min="0" max="240" value="${a.postIntervalMin}"></div>
+        <div class="srow">
+          <span class="srow-text"><b>공개 범위</b></span>
+          <div class="ctl"><select data-f="postVisibility" aria-label="공개 범위">${visOptions(a.postVisibility)}</select></div>
         </div>
-        <div class="check"><input type="checkbox" data-f="neighborEnabled"${a.neighbor&&a.neighbor.enabled?' checked':''}> <span>이 계정 이웃 관리 사용</span></div>
-        <div class="hint acct-est" data-role="est"></div>
-        <div class="actions"><button class="btn solid tiny" data-act="save">이 계정 저장</button></div>
+        <div class="srow">
+          <span class="srow-text"><b>카테고리</b><span>블로그에 있는 이름 그대로 적습니다. 비우면 기본 카테고리에 올라갑니다.</span></span>
+          <div class="ctl"><input type="text" data-f="postCategory" aria-label="카테고리" value="${escapeHtml(a.postCategory||"")}" placeholder="예: 제습기" /></div>
+        </div>
+        <div class="srow">
+          <span class="srow-text"><b>한 번에 올릴 글 수</b></span>
+          <div class="ctl"><input type="number" data-f="postsPerRun" aria-label="한 번에 올릴 글 수" min="1" max="20" value="${a.postsPerRun}"> 편</div>
+        </div>
+        <div class="srow">
+          <span class="srow-text"><b>글 사이 간격</b><span>글 하나를 올리고 다음 글을 올리기까지 기다리는 시간입니다.</span></span>
+          <div class="ctl"><input type="number" data-f="postIntervalMin" aria-label="글 사이 간격" min="0" max="240" value="${a.postIntervalMin}"> 분</div>
+        </div>
+        <div class="srow">
+          <span class="srow-text"><b>이웃 관리</b><span>글을 올린 뒤 이웃 글에 공감하고 댓글을 남깁니다.</span></span>
+          <input type="checkbox" class="switch" data-f="neighborEnabled" aria-label="이웃 관리"${a.neighbor&&a.neighbor.enabled?' checked':''}>
+        </div>
+        <div class="srow">
+          <span class="srow-text"><b>키워드 자동 선정</b><span>끄면 아래 우선 키워드와 맞는 것부터 고릅니다.</span></span>
+          <input type="checkbox" class="switch" data-f="autoKeyword" aria-label="키워드 자동 선정"${a.autoKeyword!==false?' checked':''}>
+        </div>
+        <div class="srow stack">
+          <span class="srow-text"><b>우선 키워드</b><span>쉼표로 구분합니다.</span></span>
+          <textarea data-f="topicKeywords" aria-label="우선 키워드">${escapeHtml((a.topicKeywords||[]).join(", "))}</textarea>
+        </div>
+        <div class="srow">
+          <div class="hint acct-est" data-role="est" style="margin:0"></div>
+          <button class="btn solid tiny" data-act="save">이 계정 저장</button>
+        </div>
       </div>
     </div>`).join("");
 
@@ -853,27 +1259,46 @@ function renderAccounts(){
     node.querySelector('[data-act="del"]').onclick=async()=>{
       const nm=_accounts.find(x=>x.id===id)?.name||"";
       if(!confirm(`계정 "${nm}"을 삭제할까요? (로그인 세션도 사라집니다)`))return;
-      await fetch(`/api/accounts/${id}`,{method:"DELETE"}); toast("삭제됨"); loadAccounts();
+      try{ await api(`/api/accounts/${encodeURIComponent(id)}`,{method:"DELETE"}); toast("삭제됨"); }catch(e){ toast("삭제하지 못했습니다: "+e.message); }
+      loadAccounts();
     };
     node.querySelector('[data-act="save"]').onclick=async(e)=>{
       const b=e.target; b.disabled=true;
-      await fetch(`/api/accounts/${id}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collectAcct(node))});
-      b.disabled=false; toast("계정 설정 저장됨"); loadAccounts();
+      try{ await postJson(`/api/accounts/${encodeURIComponent(id)}`,collectAcct(node)); delete _plans[id]; delete _picks[id]; toast("계정 설정 저장됨"); }
+      catch(e){ toast("계정 설정을 저장하지 못했습니다: "+e.message); }
+      b.disabled=false; loadAccounts(); loadStatus();
     };
     node.querySelector('[data-act="login"]').onclick=()=>startAccountLogin(id, node);
   });
 }
 async function startAccountLogin(id, node){
   const pill=node.querySelector('[data-role="loginpill"]');
-  const r=await (await fetch(`/api/accounts/${id}/login`,{method:"POST"})).json();
+  let r;
+  const url=`/api/accounts/${encodeURIComponent(id)}/login`;
+  try{
+    const res=await fetch(url,{method:"POST"});
+    let data=null; try{ data=await res.json(); }catch(e){}
+    if(res.status===409&&data&&data.needsConfirm){
+      // 다른 아이디가 방금 로그인한 상태 — 사용자가 위험을 알고 고르게 한다
+      if(!confirm(data.error)) return;
+      r=await api(url+"?force=1",{method:"POST"});
+    }else if(!res.ok){ throw new Error((data&&data.error)||`요청이 실패했습니다 (${res.status})`); }
+    else r=data;
+  }catch(e){ toast("로그인 창을 열지 못했습니다: "+e.message); return; }
   toast(r.message||"로그인 창을 열었습니다");
   pill.textContent="로그인 중…"; pill.className="pill no";
+  let lastMsg="";
   const iv=setInterval(async()=>{
     let st; try{ st=await (await fetch(`/api/accounts/${id}/login-status`)).json(); }catch(e){ return; }
-    if(st.busy){ pill.textContent="로그인 중…"; return; }
+    if(st.busy){
+      pill.textContent="로그인 중…";
+      // 진행 안내가 바뀌면 알려 준다 (재로그인 요청 · 보호조치 등)
+      if(st.message && st.message!==lastMsg){ if(lastMsg) toast(st.message); lastMsg=st.message; }
+      return;
+    }
     clearInterval(iv);
-    if(st.status==="success"||st.loggedIn){ pill.textContent="로그인됨"; pill.className="pill ok"; toast("로그인 완료"); }
-    else if(st.status==="timeout"){ pill.textContent="시간초과"; pill.className="pill no"; toast("로그인 시간 초과 — 다시 시도하세요"); }
+    if(st.status==="success"){ pill.textContent="로그인됨"; pill.className="pill ok"; toast("로그인 완료"); }
+    else if(st.status==="timeout"){ pill.textContent="시간초과"; pill.className="pill no"; toast("로그인 시간이 지났습니다. 다시 시도하세요"); }
     else { pill.textContent="로그인 필요"; pill.className="pill no"; toast("로그인 실패: "+(st.message||"")); }
     loadAccounts();
   },2000);
@@ -881,8 +1306,8 @@ async function startAccountLogin(id, node){
 $("acctAdd").onclick=async()=>{
   const blogId=$("acctNewBlog").value.trim(), name=$("acctNewName").value.trim();
   if(!blogId){ toast("블로그 아이디를 입력하세요"); return; }
-  await fetch("/api/accounts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({blogId,name})});
-  $("acctNewBlog").value=""; $("acctNewName").value=""; toast("계정 추가됨 — ‘로그인’으로 세션을 만들어 주세요"); loadAccounts();
+  try{ await postJson("/api/accounts",{blogId,name}); }catch(e){ toast("계정을 추가하지 못했습니다: "+e.message); return; }
+  $("acctNewBlog").value=""; $("acctNewName").value=""; toast("계정을 추가했습니다. ‘로그인’을 눌러 로그인해 주세요"); loadAccounts(); loadStatus();
 };
 
 // ---------- 작업 목표 모달 (가운데→양옆 액체형) ----------
@@ -918,7 +1343,21 @@ function renderGoal(){
   body.querySelectorAll("input[data-gid]").forEach(c=>c.onchange=recalcGoal);
   recalcGoal();
 }
-function openGoalModal(){ goToBlogStep(); renderGoal(); const m=$("goalModal"); m.classList.remove("closing"); m.showModal(); }
+// 고를 블로그가 하나뿐이면 고르는 단계가 필요 없다 — 바로 키워드 고르기로 간다
+function singleReadyAccount(){
+  if(_accounts.length!==1) return null;
+  const a=_accounts[0];
+  return (a.loggedIn && !a.needsRelogin) ? a : null;
+}
+function openGoalModal(){
+  // 키워드 목록은 열 때마다 새로 받는다. 받아 둔 목록을 다시 쓰면, 그 사이 학습 템플릿을
+  // 바꿨을 때 예전 블로그의 키워드가 그대로 보이고 고르면 발행 단계에서 거부된다.
+  // (서버가 학습 글을 기억하고 있어 다시 받아도 금방이다)
+  _plans={}; _picks={};
+  goToBlogStep(); renderGoal();
+  const m=$("goalModal"); m.classList.remove("closing"); m.showModal();
+  if(singleReadyAccount()) goToKeywordStep();
+}
 function closeGoalModal(){ const m=$("goalModal"); m.classList.add("closing"); setTimeout(()=>{ m.close(); m.classList.remove("closing"); },200); }
 $("goalClose").onclick=closeGoalModal;
 $("goalModal").addEventListener("cancel",(e)=>{ e.preventDefault(); closeGoalModal(); });
@@ -956,7 +1395,7 @@ function goToKeywordStep(){
   $("goalBody").hidden=true; $("goalKwBody").hidden=false;
   $("goalTitle").textContent="어떤 키워드로 쓸까요";
   $("goalSub").textContent="학습 블로그에서 수집한 키워드 중에서 고릅니다";
-  $("goalBack").hidden=false;
+  $("goalBack").hidden=!!singleReadyAccount();
   btnLabel($("goalStart"),"작업 시작");
   renderKwStep(ids);
   loadPlans(ids);
@@ -1026,14 +1465,14 @@ function renderPlan(id){
   const chipsHtml=cands.length
     ? `<div class="chips" data-role="chips">${cands.map(c=>`
         <button type="button" class="chip" data-kw="${escapeHtml(c.keyword)}">
-          <span data-role="n"></span><span>${escapeHtml(c.keyword)}</span>${c.hasImage?"":'<span class="noimg">사진없음</span>'}
+          <span data-role="n"></span><span>${escapeHtml(c.keyword)}</span>${c.lastUsedDays==null?"":`<span class="ago">${c.lastUsedDays}일 전</span>`}${c.hasImage?"":'<span class="noimg">사진없음</span>'}
         </button>`).join("")}</div>`
     : "";
 
   const blocked=plan.blocked||[];
   const blockedHtml=blocked.length
     ? `<button type="button" class="kw-more" data-role="more">겹쳐서 제외된 키워드 ${blocked.length}개 보기</button>
-       <div class="kw-blocked" data-role="blocked" hidden>${blocked.map(b=>`${escapeHtml(b.keyword)} <span style="color:#4a4a52">— ${escapeHtml(b.reason)}</span>`).join("<br>")}</div>`
+       <div class="kw-blocked" data-role="blocked" hidden>${blocked.map(b=>`${escapeHtml(b.keyword)} <span style="color:#4a4a52">(${escapeHtml(b.reason)})</span>`).join("<br>")}</div>`
     : "";
 
   node.innerHTML=`
@@ -1047,8 +1486,8 @@ function renderPlan(id){
       <div class="kw-label">학습 블로그 수집 키워드${plan.learnFrom?` · <span class="id">@${escapeHtml(plan.learnFrom)}</span>`:""}</div>
       ${chipsHtml}
       <div class="kw-tip">${need>1
-        ? `글 ${need}편 — 고른 순서대로 씁니다. ${need}개를 다 고른 뒤 하나 더 고르면 먼저 고른 것이 빠집니다.`
-        : "글 1편 — 하나만 고릅니다. 고르지 않으면 추천 키워드로 씁니다."}</div>
+        ? `글 ${need}편을 고른 순서대로 씁니다. ${need}개를 다 고른 뒤 하나 더 고르면 먼저 고른 것이 빠집니다.`
+        : "하나만 고릅니다. 고르지 않으면 추천 키워드로 씁니다."} 올린 지 오래된 제품이 앞에 옵니다.</div>
       ${blockedHtml}
     </div>`:(blockedHtml?`<div class="kw-sec">${blockedHtml}</div>`:"")}`;
 
@@ -1096,13 +1535,12 @@ $("goalStart").onclick=async()=>{
   const keywords={}; ids.forEach(id=>{ if((_picks[id]||[]).length) keywords[id]=_picks[id]; });
   closeGoalModal();
   _plans={}; _picks={};   // 이번 회차에 쓴 키워드는 다음 번 후보에서 빠진다 → 캐시 버림
-  await fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(collect())}).catch(()=>{});
-  $("apiKey").value="";
+  await saveSettingsFromForm().catch(()=>{});
   $("worklog").textContent="작업 준비 중…"; setWorking(true); fastPoll();
   try{
-    const r=await (await fetch("/api/run/all",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({headless:true,accountIds:ids,keywords})})).json();
+    const r=await postJson("/api/run/all",{headless:true,accountIds:ids,keywords});
     $("worklog").textContent=r.message||"완료"; toast(r.message||"오늘 작업 완료");
-  }catch(err){ $("worklog").textContent="실패: "+err; toast("실패: "+err); }
+  }catch(err){ $("worklog").textContent="실패: "+err.message; toast("실패: "+err.message); }
   finally{ await loadStatus(); loadDrafts(); loadAccounts(); }
 };
 
