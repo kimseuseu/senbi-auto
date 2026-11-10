@@ -15,6 +15,7 @@ import { normalizeBlogId, isValidBlogId, resolveBlogId } from "../crawl/rss";
 import { dataPath, ensureDir } from "../config/paths";
 import type { Visibility } from "../naver/publish";
 import { createLogger } from "./logger";
+import { parseProxy, MASK } from "../naver/proxy";
 
 const log = createLogger("accounts");
 
@@ -33,6 +34,11 @@ export interface Account {
   postsPerRun: number; // 발행할 글 수
   postIntervalMin: number; // 발행 텀 (글 사이 분)
   neighbor: NeighborSettings; // 이 계정 이웃 관리 설정
+  /**
+   * 이 계정이 네이버에 접속할 프록시 (IP:포트, 또는 IP:포트:아이디:비밀번호). 비우면 이 PC의 IP.
+   * 적어 두면 로그인·세션 확인·발행·이웃 관리가 전부 이 IP로만 나간다 (안 되면 멈춘다).
+   */
+  proxy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +133,7 @@ export function addAccount(
     postsPerRun: partial.postsPerRun ?? 1,
     postIntervalMin: partial.postIntervalMin ?? 5,
     neighbor: partial.neighbor ?? structuredClone(s.neighbor),
+    proxy: partial.proxy ?? "",
     createdAt: now(),
     updatedAt: now(),
   };
@@ -175,6 +182,14 @@ export function sanitizeAccountPatch(input: unknown): Sanitized<Account> {
   if (postIntervalMin !== undefined) patch.postIntervalMin = postIntervalMin;
   const neighbor = sanitizeNeighborPatch(p.neighbor);
   if (neighbor) patch.neighbor = neighbor as NeighborSettings;
+  if (p.proxy !== undefined) {
+    if (typeof p.proxy !== "string") return { ok: false, error: "프록시 값이 올바르지 않습니다." };
+    const raw = p.proxy.trim().slice(0, 300);
+    // 가려진 비밀번호(••••)가 섞인 값은 호출하는 쪽에서 저장된 비밀번호로 되돌린 뒤 넘긴다
+    const parsed = parseProxy(raw.replace(MASK, "x"));
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    patch.proxy = raw;
+  }
 
   return { ok: true, patch };
 }

@@ -4,6 +4,15 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { SESSION_DIR, ensureDir, dataPath } from "../config/paths";
 import { createLogger } from "../core/logger";
 import { ensureBrowserAvailable } from "./browserSetup";
+import { getAccount } from "../core/accounts";
+import {
+  parseProxy,
+  proxyExitIp,
+  readLoginIp,
+  sessionProxyMismatch,
+  type ProxyConfig,
+} from "./proxy";
+import { markSessionInvalid } from "./sessionState";
 
 const log = createLogger("session");
 
@@ -15,6 +24,16 @@ type StoredCookie = Awaited<ReturnType<BrowserContext["cookies"]>>[number];
 
 // 컨텍스트가 어느 계정 것인지 — 닫을 때 최신 쿠키를 그 계정 파일에 다시 저장한다
 const contextAccount = new WeakMap<BrowserContext, string | undefined>();
+// 컨텍스트가 어느 프록시로, 밖에서 어떤 IP로 보이는지 — 로그인 IP 기록에 쓴다
+const contextNet = new WeakMap<BrowserContext, { proxy: ProxyConfig | null; exitIp: string | null }>();
+
+/** 이 브라우저가 쓰는 프록시와 밖에서 보이는 IP (프록시 없으면 둘 다 null) */
+export function contextNetwork(context: BrowserContext): {
+  proxy: ProxyConfig | null;
+  exitIp: string | null;
+} {
+  return contextNet.get(context) ?? { proxy: null, exitIp: null };
+}
 
 /** 계정별 브라우저 프로필 폴더 (accountId 없으면 레거시 단일 세션) */
 function sessionDirFor(accountId?: string): string {
@@ -101,6 +120,44 @@ export interface LaunchOptions {
   slowMo?: number;
   /** 계정 id — 주면 계정별 세션 폴더/쿠키를 사용 (다계정 격리) */
   accountId?: string;
+  /**
+   * 로그인 창을 여는 것인지. 로그인은 지금 프록시로 새 세션을 만드는 것이라
+   * '다른 IP로 로그인한 세션' 검사를 하지 않는다.
+   */
+  forLogin?: boolean;
+}
+
+/**
+ * 계정의 프록시를 확인한다. 프록시가 적혀 있으면 실제로 그 IP로 나가는지 브라우저를 띄우기 전에 본다.
+ * 안 되면 오류를 던진다 — 이 PC의 IP로 대신 접속하면 보호조치를 부를 수 있다.
+ */
+async function resolveNetwork(
+  opts: LaunchOptions,
+): Promise<{ proxy: ProxyConfig | null; exitIp: string | null }> {
+  if (!opts.accountId) return { proxy: null, exitIp: null };
+  const parsed = parseProxy(getAccount(opts.accountId)?.proxy);
+  if (!parsed.ok) throw new Error(`이 계정의 프록시 설정이 올바르지 않습니다 — ${parsed.error}`);
+  const proxy = parsed.proxy;
+  if (!proxy) return { proxy: null, exitIp: null };
+
+  if (!opts.forLogin) {
+    const why = sessionProxyMismatch(opts.accountId, proxy);
+    if (why) {
+      markSessionInvalid(opts.accountId, "다른 IP로 로그인한 세션");
+      throw new Error(why);
+    }
+  }
+  const exitIp = await proxyExitIp(proxy);
+  log.info(`프록시 ${proxy.label} 경유 — 네이버에는 ${exitIp} 로 보입니다`);
+  const rec = readLoginIp(opts.accountId);
+  if (!opts.forLogin && rec?.ip && rec.ip !== exitIp) {
+    // 같은 프록시인데 나가는 IP가 바뀌었다 (IP가 도는 프록시) — 막지는 않되 남겨 둔다
+    log.warn(
+      `로그인할 때 IP(${rec.ip})와 지금 IP(${exitIp})가 다릅니다 — 프록시가 IP를 바꿨습니다. ` +
+        "보호조치가 걸리면 IP가 고정되는 프록시를 쓰세요.",
+    );
+  }
+  return { proxy, exitIp };
 }
 
 /**
@@ -114,6 +171,7 @@ export async function launchContext(
   // 설치본에는 Chromium 이 없으므로 필요한 순간에 자동으로 받는다 (있으면 즉시 통과).
   // 회사 방화벽 등으로 못 받으면 PC에 이미 있는 Edge/Chrome 로 대신 실행한다.
   const fallbackChannel = await ensureBrowserAvailable();
+  const net = await resolveNetwork(opts); // 프록시가 안 되면 여기서 멈춘다
   const sessionDir = sessionDirFor(opts.accountId);
   ensureDir(sessionDir);
   clearBrowserLocks(opts.accountId); // 이전 비정상 종료가 남긴 잠금 제거 → 즉시 닫힘 방지
@@ -123,8 +181,15 @@ export async function launchContext(
     viewport: { width: 1366, height: 900 },
     locale: "ko-KR",
     timezoneId: "Asia/Seoul",
-    args: ["--disable-blink-features=AutomationControlled"],
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      // 프록시를 쓸 때 WebRTC 가 프록시를 건너뛰어 이 PC의 실제 IP를 드러내지 않게 한다
+      ...(net.proxy ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
+    ],
     ignoreDefaultArgs: ["--enable-automation"],
+    proxy: net.proxy
+      ? { server: net.proxy.server, username: net.proxy.username, password: net.proxy.password }
+      : undefined,
   };
   // 브라우저가 스스로 밝히는 정보는 손대지 않는다(실측 2026-09-30).
   // 예전엔 User-Agent 를 "Chrome/131" 로 고정하고 navigator 값을 스크립트로 덮어썼는데,
@@ -161,6 +226,7 @@ export async function launchContext(
   }
 
   contextAccount.set(context, opts.accountId);
+  contextNet.set(context, net);
 
   // 저장된 로그인 쿠키 재주입 (세션 쿠키 유실 방지)
   const saved = loadSavedCookies(opts.accountId);

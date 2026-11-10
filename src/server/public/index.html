@@ -289,6 +289,12 @@
   .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:99px;background:rgba(255,255,255,.06);
     border:1px solid var(--line);margin-left:6px;color:var(--muted)}
   .hint{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.5}
+  /* 계정별 프록시 */
+  .proxy-row{display:flex;gap:8px;align-items:center}
+  .proxy-row input{flex:1;min-width:0;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+  .proxy-row .btn{flex:none}
+  .hint.ok{color:var(--ok)} .hint.warn{color:var(--warn)}
+  .pill.ip{color:var(--muted);border-color:var(--line);font-variant-numeric:tabular-nums}
   code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:5px;font-size:12px}
   dialog{border:1px solid var(--line2);border-radius:16px;max-width:640px;width:92vw;padding:0;background:var(--panel);color:var(--text)}
   dialog::backdrop{background:rgba(0,0,0,.6);backdrop-filter:blur(4px)}
@@ -1180,7 +1186,21 @@ function collectAcct(node){
     postsPerRun:+g("postsPerRun").value||1,
     postIntervalMin:+g("postIntervalMin").value||0,
     neighbor:{ enabled:g("neighborEnabled").checked },
+    proxy:g("proxy").value.trim(),
   };
+}
+// 계정이 지금 작업할 수 있는 상태인지 — 다른 IP로 로그인한 세션(프록시를 바꾼 뒤)도 다시 로그인해야 한다
+function acctReady(a){ return a.loggedIn && !a.needsRelogin && !a.proxyRelogin; }
+function acctNeedsRelogin(a){ return a.needsRelogin || Boolean(a.proxyRelogin); }
+function proxyInfo(a){
+  if(a.proxyRelogin) return {cls:"warn", text:a.proxyRelogin};
+  const r=a.loginIp;
+  if(a.proxy && r && r.proxy && r.ip){
+    const when=new Date(r.at).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    return {cls:"", text:`${when}에 ${r.ip} 로 로그인했습니다 (${r.proxy} 경유). 작업할 때마다 이 프록시가 되는지 먼저 확인합니다.`};
+  }
+  if(a.proxy) return {cls:"", text:"저장한 뒤 이 계정으로 로그인하면 로그인부터 이 IP로 진행됩니다."};
+  return {cls:"", text:"비우면 이 PC의 IP로 접속합니다."};
 }
 async function loadAccounts(){
   try{ _accounts=await (await fetch("/api/accounts")).json(); }catch(e){ _accounts=[]; }
@@ -1194,7 +1214,8 @@ function renderAccounts(){
       <div class="acct-top">
         <div class="acct-id">
           <b>${escapeHtml(a.name)}</b><span class="muted">@${escapeHtml(a.blogId)}</span>
-          <span class="pill ${a.loginBusy?'no':(a.needsRelogin?'no':(a.loggedIn?'ok':'no'))}" data-role="loginpill">${a.loginBusy?'로그인 중…':(a.needsRelogin?'재로그인 필요':(a.loggedIn?'로그인됨':'로그인 필요'))}</span>
+          <span class="pill ${a.loginBusy?'no':(acctNeedsRelogin(a)?'no':(a.loggedIn?'ok':'no'))}" data-role="loginpill">${a.loginBusy?'로그인 중…':(acctNeedsRelogin(a)?'재로그인 필요':(a.loggedIn?'로그인됨':'로그인 필요'))}</span>
+          ${a.proxy?`<span class="pill ip" title="이 계정은 이 프록시로만 네이버에 접속합니다">${escapeHtml(a.proxy.split(":").slice(0,2).join(":"))}</span>`:''}
         </div>
         <div class="acct-actions">
           <button class="btn tiny" data-act="login">로그인</button>
@@ -1203,6 +1224,14 @@ function renderAccounts(){
         </div>
       </div>
       <div class="acct-body" hidden>
+        <div class="srow stack">
+          <span class="srow-text"><b>프록시 (IP:포트)</b><span>적어 두면 로그인·발행·이웃 관리가 전부 이 IP로만 나갑니다. 프록시가 안 되면 이 PC의 IP로 대신 접속하지 않고 멈춥니다.</span></span>
+          <div class="proxy-row">
+            <input type="text" data-f="proxy" aria-label="프록시 IP:포트" value="${escapeHtml(a.proxy||"")}" placeholder="123.45.67.89:8080" spellcheck="false" autocomplete="off" inputmode="url" />
+            <button class="btn tiny" type="button" data-act="proxytest">연결 확인</button>
+          </div>
+          <div class="hint ${proxyInfo(a).cls}" data-role="proxyres" aria-live="polite">${escapeHtml(proxyInfo(a).text)}</div>
+        </div>
         <div class="srow">
           <span class="srow-text"><b>학습 템플릿</b><span>이 계정이 문체와 사진, 키워드를 배울 블로그입니다.</span></span>
           <div class="ctl"><select data-f="templateId" aria-label="학습 템플릿">${tplOptions(a.templateId)}</select></div>
@@ -1264,11 +1293,36 @@ function renderAccounts(){
     };
     node.querySelector('[data-act="save"]').onclick=async(e)=>{
       const b=e.target; b.disabled=true;
-      try{ await postJson(`/api/accounts/${encodeURIComponent(id)}`,collectAcct(node)); delete _plans[id]; delete _picks[id]; toast("계정 설정 저장됨"); }
+      try{
+        const before=_accounts.find(x=>x.id===id);
+        const saved=await postJson(`/api/accounts/${encodeURIComponent(id)}`,collectAcct(node));
+        delete _plans[id]; delete _picks[id];
+        toast(saved.proxyRelogin && before && !before.proxyRelogin
+          ? "저장됨 — 프록시가 바뀌었으니 이 계정으로 다시 로그인해 주세요"
+          : "계정 설정 저장됨");
+      }
       catch(e){ toast("계정 설정을 저장하지 못했습니다: "+e.message); }
       b.disabled=false; loadAccounts(); loadStatus();
     };
     node.querySelector('[data-act="login"]').onclick=()=>startAccountLogin(id, node);
+    node.querySelector('[data-act="proxytest"]').onclick=async(e)=>{
+      const b=e.currentTarget, out=node.querySelector('[data-role="proxyres"]');
+      const val=node.querySelector('[data-f="proxy"]').value.trim();
+      if(!val){ out.className="hint warn"; out.textContent="프록시를 먼저 적어 주세요. 예) 123.45.67.89:8080"; return; }
+      b.disabled=true; btnLabel(b,"확인 중…"); out.className="hint"; out.textContent="프록시로 접속해 보는 중입니다…";
+      try{
+        const r=await postJson(`/api/accounts/${encodeURIComponent(id)}/proxy-test`,{proxy:val});
+        const sec=(r.ms/1000).toFixed(1);
+        if(r.sameAsPc){
+          out.className="hint warn";
+          out.textContent=`연결은 되지만 이 PC의 IP(${r.pcIp})와 같습니다. 이 프록시는 IP를 바꿔 주지 않습니다.`;
+        }else{
+          out.className="hint ok";
+          out.textContent=`연결됨 · 네이버에는 ${r.exitIp} 로 보입니다${r.pcIp?` (이 PC는 ${r.pcIp})`:''} · ${sec}초`;
+        }
+      }catch(err){ out.className="hint warn"; out.textContent=err.message; }
+      b.disabled=false; btnLabel(b,"연결 확인");
+    };
   });
 }
 async function startAccountLogin(id, node){
@@ -1330,8 +1384,8 @@ function renderGoal(){
   const body=$("goalBody");
   if(!_accounts.length){ body.innerHTML='<div class="muted" style="padding:16px 4px">등록된 계정이 없습니다. 상세 설정에서 계정을 추가하세요.</div>'; $("goalEst").textContent=""; $("goalStart").disabled=true; return; }
   body.innerHTML=_accounts.map(a=>{
-    const ok=a.loggedIn && !a.needsRelogin;
-    const warn=a.needsRelogin?' · ⚠️ 재로그인 필요':(a.loggedIn?'':' · ⚠️ 로그인 필요');
+    const ok=acctReady(a);
+    const warn=acctNeedsRelogin(a)?' · ⚠️ 재로그인 필요':(a.loggedIn?'':' · ⚠️ 로그인 필요');
     return `<label class="goal-acct${ok?'':' off'}">
       <input type="checkbox" data-gid="${a.id}"${ok?' checked':''}${ok?'':' disabled'}>
       <div class="ga-main">
@@ -1347,7 +1401,7 @@ function renderGoal(){
 function singleReadyAccount(){
   if(_accounts.length!==1) return null;
   const a=_accounts[0];
-  return (a.loggedIn && !a.needsRelogin) ? a : null;
+  return acctReady(a) ? a : null;
 }
 function openGoalModal(){
   // 키워드 목록은 열 때마다 새로 받는다. 받아 둔 목록을 다시 쓰면, 그 사이 학습 템플릿을

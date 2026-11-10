@@ -37,6 +37,16 @@ import { hasSavedSession } from "../naver/session";
 import { browserStatus } from "../naver/browserSetup";
 import { getSessionState } from "../naver/sessionState";
 import {
+  parseProxy,
+  maskProxy,
+  restoreProxyPassword,
+  proxyExitIp,
+  directIp,
+  readLoginIp,
+  sessionProxyMismatch,
+  MASK,
+} from "../naver/proxy";
+import {
   todayCount,
   recentPublished,
   recentPublishedFor,
@@ -222,8 +232,14 @@ export async function startDashboard(port: number): Promise<number> {
   /** 로그인 세션 상태를 붙여 계정 목록 반환 */
   function accountView(a: Account) {
     const ss = getSessionState(a.id);
+    const px = parseProxy(a.proxy);
+    const proxyConf = px.ok ? px.proxy : null;
     return {
       ...a,
+      proxy: maskProxy(a.proxy), // 비밀번호는 화면에 내보내지 않는다
+      loginIp: readLoginIp(a.id),
+      // 프록시를 쓰는데 세션은 다른 IP로 로그인한 것 → 작업 전에 다시 로그인해야 한다
+      proxyRelogin: hasSavedSession(a.id) ? sessionProxyMismatch(a.id, proxyConf) : null,
       loggedIn: hasSavedSession(a.id),
       loginBusy: isLoginInProgress(a.id),
       needsRelogin: ss.needsRelogin, // 쿠키는 있어도 서버 세션이 만료된 경우
@@ -241,6 +257,9 @@ export async function startDashboard(port: number): Promise<number> {
       }
       const clean = sanitizeAccountPatch(req.body);
       if (!clean.ok) return reply.code(400).send({ error: clean.error });
+      if (clean.patch.proxy?.includes(MASK)) {
+        return reply.code(400).send({ error: "프록시 비밀번호를 적어 주세요." });
+      }
       // 로그인 아이디를 적었더라도 블로그의 실제 주소로 저장한다
       const blogId = await canonicalBlogId(clean.patch.blogId!);
       const acc = addAccount({ ...clean.patch, name: clean.patch.name || blogId, blogId });
@@ -255,6 +274,13 @@ export async function startDashboard(port: number): Promise<number> {
       const clean = sanitizeAccountPatch(req.body ?? {});
       if (!clean.ok) return reply.code(400).send({ error: clean.error });
       if (clean.patch.blogId) clean.patch.blogId = await canonicalBlogId(clean.patch.blogId);
+      if (clean.patch.proxy !== undefined) {
+        const unmasked = restoreProxyPassword(clean.patch.proxy, getAccount(req.params.id)?.proxy);
+        if (unmasked === null) {
+          return reply.code(400).send({ error: "프록시 비밀번호를 다시 적어 주세요." });
+        }
+        clean.patch.proxy = unmasked;
+      }
       const acc = updateAccount(req.params.id, clean.patch);
       if (!acc) return reply.code(404).send({ error: "계정 없음" });
       return accountView(acc);
@@ -339,6 +365,39 @@ export async function startDashboard(port: number): Promise<number> {
     }
     void startLogin(acc.id, acc.blogId); // await 안 함 — 백그라운드로 창 유지
     return { ok: true, message: "로그인 창을 열었습니다. 창에서 직접 로그인해 주세요." };
+    },
+  );
+
+  // 프록시 연결 확인 — 저장 전 입력값(proxy)을 주면 그걸로, 없으면 저장된 값으로.
+  // 프록시를 거친 IP 와 이 PC의 IP 를 함께 돌려준다 (같으면 프록시가 IP를 바꿔 주지 못하는 것).
+  app.post<{ Params: { id: string }; Body: { proxy?: string } }>(
+    "/api/accounts/:id/proxy-test",
+    async (req, reply) => {
+      const acc = getAccount(req.params.id);
+      if (!acc) return reply.code(404).send({ error: "계정 없음" });
+      const raw =
+        typeof req.body?.proxy === "string"
+          ? restoreProxyPassword(req.body.proxy.trim(), acc.proxy)
+          : (acc.proxy ?? "");
+      if (raw === null) return reply.code(400).send({ error: "프록시 비밀번호를 다시 적어 주세요." });
+      const parsed = parseProxy(raw);
+      if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
+      if (!parsed.proxy) return reply.code(400).send({ error: "프록시를 먼저 적어 주세요." });
+      const started = Date.now();
+      const [exit, mine] = await Promise.allSettled([proxyExitIp(parsed.proxy), directIp()]);
+      if (exit.status === "rejected") {
+        const msg = exit.reason instanceof Error ? exit.reason.message : String(exit.reason);
+        return reply.code(502).send({ error: msg.replace(/ 이 PC의 IP로 대신 접속하지 않도록 작업을 멈췄습니다\.$/, "") });
+      }
+      const pcIp = mine.status === "fulfilled" ? mine.value : null;
+      return {
+        ok: true,
+        proxy: parsed.proxy.label,
+        exitIp: exit.value,
+        pcIp,
+        sameAsPc: Boolean(pcIp && pcIp === exit.value),
+        ms: Date.now() - started,
+      };
     },
   );
 

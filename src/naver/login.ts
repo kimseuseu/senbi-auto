@@ -6,7 +6,9 @@ import {
   clearAuthCookies,
   hasSavedSession,
   verifyWriteSession,
+  contextNetwork,
 } from "./session";
+import { recordLoginIp, sessionProxyMismatch } from "./proxy";
 import type { Page } from "playwright";
 import { markSessionValid } from "./sessionState";
 import { createLogger } from "../core/logger";
@@ -103,19 +105,30 @@ export async function startLogin(accountId: string, blogId?: string): Promise<vo
   let context: Awaited<ReturnType<typeof launchContext>> | null = null;
   try {
     const hadSession = hasSavedSession(accountId);
-    context = await launchContext({ headless: false, accountId });
+    // 프록시를 적어 둔 계정은 이 창도 그 프록시로 뜬다 — 로그인 자체가 그 IP에서 일어난다
+    context = await launchContext({ headless: false, accountId, forLogin: true });
+    const net = contextNetwork(context);
+    if (net.proxy) {
+      waiting(
+        `열린 창에서 직접 네이버에 로그인해 주세요 (2단계 인증 포함). ` +
+          `프록시 ${net.proxy.label} 경유 — 네이버에는 ${net.exitIp} 로 보입니다.`,
+      );
+    }
     const page = context.pages()[0] ?? (await context.newPage());
 
     const succeed = async (note: string): Promise<void> => {
       await saveCookies(context!, accountId);
       recordLogin(accountId);
+      recordLoginIp(accountId, net.proxy, net.exitIp); // 이 세션은 이 IP에 묶어 쓴다
       markSessionValid(accountId); // 재로그인 성공 → '재로그인 필요' 해제
       states.set(accountId, { status: "success", message: "로그인 완료 — 세션이 저장됐습니다." });
       log.info(`[${accountId}] 로그인 성공 — 세션 저장 (${note})`);
     };
 
-    // 저장해 둔 세션이 아직 살아 있으면 다시 로그인할 필요가 없다
-    if (hadSession && blogId && (await verifyWriteSession(page, blogId)) === "ok") {
+    // 저장해 둔 세션이 아직 살아 있으면 다시 로그인할 필요가 없다.
+    // 단, 다른 IP(이 PC 또는 다른 프록시)로 로그인한 세션은 되살리지 않는다 — 새 IP로 새로 로그인한다.
+    const sameIp = !sessionProxyMismatch(accountId, net.proxy);
+    if (hadSession && sameIp && blogId && (await verifyWriteSession(page, blogId)) === "ok") {
       await succeed("기존 세션이 유효함");
       return;
     }
