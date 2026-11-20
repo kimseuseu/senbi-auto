@@ -8,6 +8,8 @@ export interface GeneratedDraft {
   summary?: string;
   content: string; // 줄바꿈 적용본
   rawContent: string;
+  /** 섹션 소제목 줄들 — 초안을 다시 올릴 때 소제목·인용구 서식을 되살린다 (예전 초안엔 없다) */
+  headings?: string[];
   mainKeyword?: string;
   /** 어느 블로그에 올리려고 만든 글인지 (예전 초안엔 없다) */
   blogId?: string;
@@ -42,6 +44,7 @@ export function addDraft(
     summary: result.summary,
     content: result.content,
     rawContent: result.rawContent,
+    headings: result.headings,
     mainKeyword: result.mainKeyword,
     blogId,
     score: result.score?.total,

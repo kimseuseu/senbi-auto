@@ -8,6 +8,31 @@ const log = createLogger("generate");
 export { runPipeline };
 
 /**
+ * 키워드 하나로 글을 쓸 때의 서브키워드와 화자 정보.
+ * 키워드 하나 = 글 하나. 다른 주제 키워드를 서브로 섞지 않는다 —
+ * 서브키워드는 메인 키워드 자체를 구성하는 어절(롱테일)만 쓴다.
+ */
+export function writingContext(
+  settings: Settings,
+  mainKeyword: string,
+): { subKeywords: string[]; userInfo: { question: string; answer: string }[] } {
+  const subKeywords = [
+    ...new Set(mainKeyword.split(/\s+/).map((w) => w.trim()).filter((w) => w.length >= 2)),
+  ]
+    .filter((w) => w !== mainKeyword)
+    .slice(0, 3);
+  const userInfo = settings.brandName?.trim()
+    ? [
+        {
+          question: "이 글의 화자(블로그·업체) 이름은 무엇인가요?",
+          answer: settings.brandName.trim(),
+        },
+      ]
+    : [];
+  return { subKeywords, userInfo };
+}
+
+/**
  * 크롤링한 참고글을 학습해 지정 키워드로 글 1편을 생성한다.
  * brandName 이 설정돼 있으면 화자 정체성으로 주입해 참고글 상호 복사를 막는다.
  */
@@ -18,22 +43,7 @@ export async function generateFromReferences(
   apiKey: string,
   instructions?: string,
 ): Promise<GenerateResult> {
-  // 키워드 하나 = 글 하나. 다른 주제 키워드를 서브로 섞지 않는다.
-  // 서브키워드는 메인 키워드 자체를 구성하는 어절(롱테일)만 사용.
-  const subKeywords = [
-    ...new Set(mainKeyword.split(/\s+/).map((w) => w.trim()).filter((w) => w.length >= 2)),
-  ]
-    .filter((w) => w !== mainKeyword)
-    .slice(0, 3);
-
-  const userInfo = settings.brandName?.trim()
-    ? [
-        {
-          question: "이 글의 화자(블로그·업체) 이름은 무엇인가요?",
-          answer: settings.brandName.trim(),
-        },
-      ]
-    : [];
+  const { subKeywords, userInfo } = writingContext(settings, mainKeyword);
 
   log.info(`글 생성 시작 — 메인키워드 "${mainKeyword}", 참고글 ${references.length}건`);
 

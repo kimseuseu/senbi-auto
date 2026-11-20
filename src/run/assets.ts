@@ -14,6 +14,7 @@ import {
   prepareSharp,
   prepareVerbatim,
 } from "../media/images";
+import { aHash, hamming } from "../media/hash";
 import { filterUnusedImages, usedImagesOldestFirst } from "../core/usedImages";
 import { createLogger } from "../core/logger";
 
@@ -108,6 +109,112 @@ async function prepareSignatureBlocks(sig: Signature): Promise<PreparedSignature
 }
 
 /**
+ * 사진이 썸네일인지·제품사양 표인지 판별하는 쪽.
+ * 앱은 API 비전으로 판별하고, 클로드가 직접 발행할 때는 클로드가 사진을 보고 내린 판단을 넘긴다.
+ */
+export interface AssetJudge {
+  isThumbnail?: (buf: Buffer, url: string) => boolean | Promise<boolean>;
+  isSpecTable?: (buf: Buffer, url: string) => boolean | Promise<boolean>;
+  /** 본문에 넣으면 안 되는 사진(배너·연락처 카드·로고 등)이면 true */
+  exclude?: (url: string) => boolean;
+}
+
+/**
+ * 서명 이미지와 **같은 그림**인 사진을 걸러낸다.
+ *
+ * 서명 감지는 글의 '맨 끝'에서 되풀이되는 블록만 본다. 그런데 원문은 같은 배너(상호·전화번호 카드)를
+ * 글 중간에도 넣는다 → 그 배너가 본문 사진으로 뽑혀 새 글 한가운데에 들어갔다(실측 2026-11-20).
+ * 템플릿은 글마다 사진을 따로 저장해 주소가 달라서 주소 비교로는 못 잡는다 — 지각적 해시로 비교한다.
+ */
+async function withoutSignatureLookalikes(urls: string[], sigImageUrls: string[]): Promise<string[]> {
+  if (sigImageUrls.length === 0 || urls.length === 0) return urls;
+  const hashOf = async (url: string): Promise<bigint | null> => {
+    try {
+      return await aHash(await downloadImage(url));
+    } catch {
+      return null;
+    }
+  };
+  const sig = (await Promise.all(sigImageUrls.map(hashOf))).filter((h): h is bigint => h !== null);
+  if (sig.length === 0) return urls;
+  const keep: string[] = [];
+  for (const url of urls) {
+    const h = await hashOf(url);
+    if (h !== null && sig.some((x) => hamming(x, h) <= 6)) continue;
+    keep.push(url);
+  }
+  if (keep.length !== urls.length) {
+    log.info(`서명 배너와 같은 사진 ${urls.length - keep.length}장은 본문에서 제외`);
+  }
+  return keep;
+}
+
+/**
+ * 본문 사진을 보충할 '같은 주제 글'들 (이미지 출처 글 제외).
+ *
+ * ⚠️ 글 하나만 놓고 keywordHasSource 를 물으면 "렌탈" 같은 공통어까지 고유 어절로 쳐서
+ *    모든 글이 같은 주제가 된다 → 피팅룸 글에 냉장 쇼케이스·난로 사진이 보충 후보로 올라왔다(실측 2026-11-20).
+ *    고유 어절은 **전체 학습 글 기준**으로 정하고, 그 절반 이상을 제목이 갖고 있어야 같은 주제로 본다.
+ */
+function sameTopicPosts(posts: CrawledPost[], ranked: CrawledPost[], keyword: string): CrawledPost[] {
+  const N = Math.max(1, posts.length);
+  const df = corpusDf(posts);
+  const distinctive = [...new Set(bigrams(keyword))].filter((g) => {
+    const d = df.get(g) ?? 0;
+    return d > 0 && d <= Math.max(1, Math.floor(N * 0.4));
+  });
+  const need = Math.max(1, Math.ceil(distinctive.length / 2));
+  return ranked.slice(1).filter((p) => {
+    if (p.title.includes(keyword)) return true;
+    if (distinctive.length === 0) return false;
+    const tb = new Set(bigrams(p.title));
+    return distinctive.filter((g) => tb.has(g)).length >= need;
+  });
+}
+
+/**
+ * 판별이 필요한 사진 후보 — buildPostAssets 가 실제로 쓸 사진과 같다.
+ * first: 썸네일일 수 있는 첫 사진 · specCandidates: 사양표일 수 있는 사진 · body: 본문에 들어갈 수 있는 사진 전부
+ */
+export async function assetJudgeCandidates(
+  posts: CrawledPost[],
+  keyword: string,
+): Promise<{
+  sourceTitle: string | null;
+  first: string | null;
+  specCandidates: string[];
+  body: string[];
+}> {
+  if (!keywordHasSource(posts, keyword)) {
+    return { sourceTitle: null, first: null, specCandidates: [], body: [] };
+  }
+  const sig = await detectSignature(posts);
+  const sigUrls = sig.blocks
+    .filter((b) => b.type === "image")
+    .map((b) => (b as { url: string }).url);
+  const clean = (urls: string[]) =>
+    withoutSignatureLookalikes(urls.filter((u) => !sigUrls.includes(u)), sigUrls);
+
+  const ranked = rankPostsByKeyword(posts, keyword);
+  const main = ranked[0]!;
+  const pool = await clean(main.images);
+  const specCandidates: string[] = [];
+  // 첫 사진이 썸네일이면 buildPostAssets 는 그 뒤부터 표를 찾는다 — 여기선 첫 사진도 후보에서 뺀다
+  for (const url of pool.slice(1, 13)) {
+    if (specCandidates.length >= 2) break;
+    try {
+      if (await looksLikeSpecTable(await downloadImage(url))) specCandidates.push(url);
+    } catch {
+      /* 다음 후보 */
+    }
+  }
+  const extra: string[] = [];
+  for (const p of sameTopicPosts(posts, ranked, keyword)) extra.push(...(await clean(p.images.slice(1))));
+  const body = [...new Set([...pool.slice(1), ...extra])].slice(0, 36);
+  return { sourceTitle: main.title, first: pool[0] ?? null, specCandidates, body };
+}
+
+/**
  * 생성 키워드에 맞는 원본 글을 골라 그 글 이미지만 사용하고,
  * 첫 이미지가 썸네일이면 분리, 반복 서명 블록을 감지해 함께 반환.
  * 연관 글이 없으면 엉뚱한 이미지 대신 내 폴더 이미지만(또는 생략) 쓴다.
@@ -117,7 +224,12 @@ export async function buildPostAssets(
   keyword: string,
   settings: Settings,
   apiKey: string,
+  judge: AssetJudge = {},
 ): Promise<PostAssets> {
+  const judgeThumbnail =
+    judge.isThumbnail ?? ((buf: Buffer) => isThumbnail(buf, apiKey, settings.model));
+  const judgeSpecTable =
+    judge.isSpecTable ?? ((buf: Buffer) => isSpecTable(buf, apiKey, settings.model));
   const sig = await detectSignature(posts);
   const signature = await prepareSignatureBlocks(sig);
   const sigUrls = new Set(
@@ -148,7 +260,11 @@ export async function buildPostAssets(
   const main = ranked[0]!;
   log.info(`키워드 "${keyword}" → 이미지 출처 글: "${main.title}"`);
 
-  let pool = main.images.filter((u) => !isSig(u));
+  const usable = async (urls: string[]): Promise<string[]> =>
+    (await withoutSignatureLookalikes(urls.filter((u) => !isSig(u)), [...sigUrls])).filter(
+      (u) => !judge.exclude?.(u),
+    );
+  let pool = await usable(main.images);
 
   // 썸네일 판별 (풀 첫 이미지) — 대표 이미지는 색 보정 없이 화질 유지
   let thumbnail: ImageAsset | undefined;
@@ -156,7 +272,7 @@ export async function buildPostAssets(
   if (first) {
     try {
       const buf = await downloadImage(first);
-      if (await isThumbnail(buf, apiKey, settings.model)) {
+      if (await judgeThumbnail(buf, first)) {
         const t = await prepareSharp(first);
         if (t) {
           thumbnail = t;
@@ -174,7 +290,7 @@ export async function buildPostAssets(
     try {
       const buf = await downloadImage(url);
       if (!(await looksLikeSpecTable(buf))) continue;
-      if (!(await isSpecTable(buf, apiKey, settings.model))) continue;
+      if (!(await judgeSpecTable(buf, url))) continue;
       const s = await prepareSharp(url); // 표는 글씨가 있어 필터 걸면 뭉개진다
       if (s) {
         specImage = s;
@@ -217,13 +333,11 @@ export async function buildPostAssets(
     );
     if (need() > 0) {
       // 같은 키워드가 제목에 들어 있는 글에서만 추가로 가져온다
-      const sameTopic = ranked
-        .slice(1)
-        .filter((p) => keywordHasSource([p], keyword) || p.title.includes(keyword));
+      const sameTopic = sameTopicPosts(posts, ranked, keyword);
       const sameTopicAll: string[] = [];
       for (const p of sameTopic) {
         if (need() <= 0) break;
-        const theirs = p.images.slice(1).filter((u) => !isSig(u));
+        const theirs = await usable(p.images.slice(1));
         sameTopicAll.push(...theirs);
         const more = await prepareOrdered(
           filterUnusedImages(theirs),

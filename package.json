@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
     "app": "electron .",
     "app:build": "npm run build:engine && electron-builder && tsx scripts/clean-unpacked.ts",
     "release": "npm run build:engine && electron-builder --publish always",

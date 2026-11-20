@@ -3,6 +3,7 @@ import type { ImageAsset, PreparedSignature, QuoteStyle, BlockStyle, TextRun } f
 import type { BodyBlock } from "../generate/structure";
 import { humanDelay } from "./session";
 import { shouldStop } from "../core/cancel";
+import { setReserveTime } from "./manage";
 import { createLogger } from "../core/logger";
 
 const STOPPED: PublishResult = { ok: false, mode: "failed", error: "작업 중지됨" };
@@ -92,6 +93,8 @@ export interface PublishInput {
   /** 발행할 카테고리 이름 (비우면 블로그 기본 카테고리) */
   category?: string;
   visibility?: Visibility;
+  /** 예약 발행 시각 (10분 단위). 주면 '현재' 대신 이 시각에 네이버가 발행한다. */
+  scheduleAt?: Date;
   /** true면 발행하지 않고 임시저장까지만 (안전 테스트용) */
   dryRun?: boolean;
   /** 종료 직전 스크린샷 저장 경로 (디버그·검증용) */
@@ -101,7 +104,8 @@ export interface PublishInput {
 export interface PublishResult {
   ok: boolean;
   url?: string;
-  mode: "published" | "draft" | "failed";
+  /** scheduled = 예약 발행 등록됨 (아직 올라가지 않았다) */
+  mode: "published" | "scheduled" | "draft" | "failed";
   error?: string;
   /** 네이버 세션 만료로 실패(글쓰기 페이지가 로그인으로 리다이렉트) */
   sessionExpired?: boolean;
@@ -561,6 +565,17 @@ const QUOTE_STYLE_TOGGLE: Record<QuoteStyle, string> = {
   corner: '.se-quotation-group-toggle-toolbar-button[data-value="quotation_corner"]',
 };
 
+/** 문단 글자가 이 문구와 **통째로** 같은지 보는 패턴 (공백·폭 없는 공백 차이는 무시) */
+function wholeLine(text: string): RegExp {
+  const gap = "[\\s\\u200b]*";
+  const body = text
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(gap);
+  return new RegExp(`^${gap}${body}${gap}$`);
+}
+
 /**
  * 소제목·인용구 서식을 **본문·이미지·서명을 모두 넣은 뒤 마지막에** 입힌다.
  *
@@ -588,7 +603,10 @@ async function applyStructuredFormats(
     try {
       // 마무리 인용구는 제목을 되풀이하므로 본문 CTA 문단과 글자가 겹친다.
       // 문서 맨 뒤에 있는 쪽을 잡아야 엉뚱한 줄을 건드리지 않는다.
-      const matches = frame.locator(".se-text-paragraph", { hasText: text });
+      // ⚠️ 줄 전체가 같아야 한다. 포함 여부로 찾으면 그 문구를 품은 다른 문단이 먼저 잡힌다 —
+      //    요약에 "…, 설치하는 날의 흐름, 자주 묻는 질문을 다룹니다"가 있으면 요약이 인용구가 되고
+      //    정작 소제목은 본문으로 남는다(실측 2026-11-20).
+      const matches = frame.locator(".se-text-paragraph", { hasText: wholeLine(text) });
       const para = b.closing ? matches.last() : matches.first();
       if (!(await para.isVisible({ timeout: 4000 }).catch(() => false))) {
         log.warn(`서식 대상 줄을 찾지 못함: "${text.slice(0, 18)}"`);
@@ -610,7 +628,7 @@ async function applyStructuredFormats(
         const label = `${b.quoteStyle} · "${text.slice(0, 14)}"`;
         // ① 인용구 안에 커서 두기 — 떠 있는 속성 툴바에 가려 일반 클릭이 막히는 자리가 있어
         //    한 번 실패하면 화면에 끌어온 뒤 force로 다시 누른다.
-        const quoted = frame.locator(".se-quotation .se-text-paragraph", { hasText: text });
+        const quoted = frame.locator(".se-quotation .se-text-paragraph", { hasText: wholeLine(text) });
         const target = b.closing ? quoted.last() : quoted.first();
         let placed = false;
         try {
@@ -1143,10 +1161,23 @@ export async function publishPost(
       }
     }
 
+    // 4-2b) 예약 발행 — 시간이 화면에 정확히 들어가지 않으면 발행하지 않는다(지금 바로 올라가는 사고 방지)
+    if (input.scheduleAt) {
+      const problem = await setReserveTime(frame, input.scheduleAt);
+      if (problem) {
+        log.error(`예약 시간 설정 실패 — 발행 중단: ${problem}`);
+        return { ok: false, mode: "failed", error: `예약 시간 설정 실패로 발행을 중단했습니다: ${problem}` };
+      }
+    }
+
     // 4-3) 확정 발행
     await robustClick(frame.locator(SEL.confirmPublish).first(), "확정 발행");
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await humanDelay(2.5, 4);
+    if (input.scheduleAt) {
+      log.info(`예약 발행 등록: ${input.scheduleAt.toISOString()}`);
+      return { ok: true, mode: "scheduled" };
+    }
 
     // page.url()이 편집기 리다이렉트(?Redirect=Write 등)를 잡으면 글 주소가 아니므로 블로그 홈으로 정리
     let url = page.url();

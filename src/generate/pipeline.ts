@@ -253,11 +253,21 @@ export interface PipelineInput {
   onProgress?: (stage: PipelineStage) => void;
 }
 
-export async function runPipeline(input: PipelineInput): Promise<GenerateResult> {
-  const client = new Anthropic({ apiKey: input.apiKey });
-  const keywords = [input.mainKeyword, ...input.subKeywords];
+/** 글을 쓰는 데 필요한 입력 (누가 쓰든 같다 — API 파이프라인이든 클로드가 직접 쓰든) */
+export type WritingInput = Omit<PipelineInput, "apiKey" | "model" | "onProgress">;
 
-  input.onProgress?.("references");
+/** 분량·겹침 기준 — 검사 도구가 같은 숫자를 쓴다 */
+export const LIMITS = { TARGET_MIN, TARGET_MAX, HARD_MIN, HARD_MAX, OVERLAP_LIMIT } as const;
+
+/**
+ * 글쓰기 지침(1단계 시스템 프롬프트)과 거기에 실린 참고글.
+ * 앱의 API 파이프라인과 클로드가 직접 쓰는 경로(MCP)가 **같은 지침**을 쓴다.
+ */
+export function buildWritingGuide(input: WritingInput): {
+  system: string;
+  usedRefs: ReferencePost[];
+} {
+  const keywords = [input.mainKeyword, ...input.subKeywords];
   const usedRefs = pickReferences(input.references, keywords);
   const refTexts = usedRefs.map((r) => r.content);
 
@@ -268,8 +278,7 @@ export async function runPipeline(input: PipelineInput): Promise<GenerateResult>
       ? `\n\n[이미 쓴 소제목 — 이 문구들은 그대로 쓰지 말고 새로 지을 것]\n${bannedHeadings.map((h) => `- ${h}`).join("\n")}`
       : "";
 
-  // ---------- 1단계: 글 생성 ----------
-  const genSystem = `너는 네이버 블로그 상위 노출 글쓰기 전문가다.
+  const system = `너는 네이버 블로그 상위 노출 글쓰기 전문가다.
 아래 참고글들은 우리가 직접 작성해 온 블로그 글이다. 이 글들의 문체, 어조, 문장 길이, 도입-전개-마무리 구성, 독자에게 말 거는 방식을 학습해서 같은 사람이 쓴 것처럼 새 글을 작성한다.
 
 ${referenceBlock(usedRefs)}
@@ -297,6 +306,16 @@ ${ORIGINALITY_RULE}${bannedHeadingBlock}
 
 ${SUMMARY_RULE}
 요약은 본문 분량(${TARGET_MIN}~${TARGET_MAX}자)에 포함하지 않는다. 본문 첫 문단은 요약을 되풀이하지 말고 평소처럼 참고글의 방식대로 시작한다.`;
+  return { system, usedRefs };
+}
+
+export async function runPipeline(input: PipelineInput): Promise<GenerateResult> {
+  const client = new Anthropic({ apiKey: input.apiKey });
+
+  input.onProgress?.("references");
+  // ---------- 1단계: 글 생성 ----------
+  const { system: genSystem, usedRefs } = buildWritingGuide(input);
+  const refTexts = usedRefs.map((r) => r.content);
 
   input.onProgress?.("generate");
   const genMessage = await client.messages.create({
@@ -428,47 +447,62 @@ ${SUMMARY_RULE}`;
     if (overlap.ratio <= OVERLAP_LIMIT) break;
   }
 
-  // ---------- 4단계: 모바일 줄바꿈 (단어 보존) ----------
   input.onProgress?.("wrap");
-  refined.content = splitFaqBlocks(refined.content); // Q./A. 를 문단으로 떼어낸 뒤 줄바꿈
-  const wrappedContent = wrapForMobile(refined.content, input.lineWidth);
+  return finalizeDraft(refined, { ...input, usedRefs, overlap });
+}
+
+/**
+ * 다 쓴 글을 발행용 결과로 마무리한다 — 줄바꿈, 필터 단어 잔존 검사, 겹침·점수 계산.
+ * AI 호출이 없다. 클로드가 직접 쓴 글도 이 함수를 거쳐 앱이 만든 글과 같은 모양이 된다.
+ */
+export function finalizeDraft(
+  draft: Draft & { replacedWords?: FilterHit[] },
+  ctx: Pick<WritingInput, "mainKeyword" | "subKeywords" | "filters" | "lineWidth" | "postType"> & {
+    usedRefs: ReferencePost[];
+    /** 이미 계산한 겹침 결과 (없으면 여기서 계산) */
+    overlap?: OverlapReport;
+  },
+): GenerateResult {
+  const overlap =
+    ctx.overlap ?? analyzeOverlap(draft.content, ctx.usedRefs.map((r) => r.content));
+
+  // ---------- 4단계: 모바일 줄바꿈 (단어 보존) ----------
+  const content = splitFaqBlocks(draft.content); // Q./A. 를 문단으로 떼어낸 뒤 줄바꿈
+  const wrappedContent = wrapForMobile(content, ctx.lineWidth);
 
   // ---------- 5단계: 필터 단어 잔존 검사 ----------
-  const summary = tidySummary(refined.summary);
-  const remaining = findRemainingWords(
-    refined.title + "\n" + summary + "\n" + refined.content,
-    input.filters,
-  );
+  const summary = tidySummary(draft.summary);
+  const remaining = findRemainingWords(draft.title + "\n" + summary + "\n" + content, ctx.filters);
   // 인용 적합도는 독자(와 검색 AI)가 실제로 보게 될 순서대로 — 요약이 맨 앞이다
-  const asPublished = summary ? `${summary}\n\n${refined.content}` : refined.content;
+  const asPublished = summary ? `${summary}\n\n${content}` : content;
 
   return {
-    title: refined.title,
+    title: draft.title,
     summary,
     content: wrappedContent,
-    rawContent: refined.content,
-    headings: (refined.headings ?? []).map((h) => h.trim()).filter(Boolean),
-    charCount: countChars(refined.content),
-    charCountWithSpaces: countCharsWithSpaces(refined.content),
-    replacedWords: refined.replacedWords ?? [],
+    rawContent: content,
+    headings: (draft.headings ?? []).map((h) => h.trim()).filter(Boolean),
+    charCount: countChars(content),
+    charCountWithSpaces: countCharsWithSpaces(content),
+    replacedWords: draft.replacedWords ?? [],
     remainingFilterWords: remaining,
-    usedReferences: usedRefs.map((r) => r.title),
+    usedReferences: ctx.usedRefs.map((r) => r.title),
     overlap,
     overlapOk: overlap.ratio <= OVERLAP_LIMIT,
-    postType: input.postType ?? "info",
-    mainKeyword: input.mainKeyword,
-    subKeywords: input.subKeywords,
+    postType: ctx.postType ?? "info",
+    mainKeyword: ctx.mainKeyword,
+    subKeywords: ctx.subKeywords,
     score: computeScore({
-      title: refined.title,
-      content: refined.content,
-      mainKeyword: input.mainKeyword,
-      subKeywords: input.subKeywords,
+      title: draft.title,
+      content,
+      mainKeyword: ctx.mainKeyword,
+      subKeywords: ctx.subKeywords,
       remainingFilterWords: remaining,
     }),
     geoScore: computeGeoScore({
-      title: refined.title,
+      title: draft.title,
       content: asPublished,
-      mainKeyword: input.mainKeyword,
+      mainKeyword: ctx.mainKeyword,
     }),
   };
 }

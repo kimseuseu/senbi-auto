@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "senbi-auto": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"]
+    }
+  }
+}

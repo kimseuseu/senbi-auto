@@ -8,8 +8,9 @@ import {
   buildStructuredBody,
 } from "../generate/structure";
 import { assertKeywordAllowed } from "../generate/keywordPool";
-import { loadLearnSource, selectKeywords } from "./keywordPlan";
-import { buildPostAssets } from "./assets";
+import { loadLearnSource, selectKeywords, type LearnSource } from "./keywordPlan";
+import { buildPostAssets, type AssetJudge } from "./assets";
+import type { GenerateResult } from "../core/types";
 import {
   addDraft,
   markPublished,
@@ -30,6 +31,10 @@ export interface PostJobResult {
   draft?: GeneratedDraft;
   published?: boolean;
   url?: string;
+  /** 예약 발행으로 등록됨 — 이 시각에 네이버가 올린다 (ISO) */
+  scheduledAt?: string;
+  /** 네이버 임시저장함에 저장됨 (발행은 안 됨) */
+  naverDraft?: boolean;
   error?: string;
 }
 
@@ -98,6 +103,52 @@ export async function runPostJob(
     // 3) 생성 (템플릿 지침 반영)
     const result = await generateFromReferences(settings, refs, keyword, apiKey, instructions);
 
+    // 3-1) 겹침 검사 → 4) 이미지 → 5) 발행 — 클로드가 직접 쓴 글(MCP)도 같은 길을 간다
+    return await finishPost({
+      settings,
+      src,
+      keyword,
+      result,
+      apiKey,
+      accountId: opts.accountId,
+      headless: opts.headless,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error("포스트 잡 실패", err);
+    return { ok: false, error: msg };
+  }
+}
+
+/** 글을 어디까지 올릴지 — publish: 발행 / naverDraft: 네이버 임시저장까지 / local: 이 PC에 초안만 */
+export type PublishMode = "publish" | "naverDraft" | "local";
+
+/**
+ * 다 쓴 글 1편을 올린다: 겹침 검사 → 이미지·썸네일·서명 준비 → 서식 재현 → 발행(또는 초안).
+ * 앱의 자동 생성(runPostJob)과 클로드가 직접 쓴 글(MCP)이 **같은 코드**로 올라간다.
+ */
+export async function finishPost(a: {
+  settings: Settings;
+  src: LearnSource;
+  keyword: string;
+  result: GenerateResult;
+  apiKey: string;
+  accountId?: string;
+  headless?: boolean;
+  /** 안 주면 설정의 자동발행 여부를 따른다 */
+  mode?: PublishMode;
+  /** 예약 발행 시각 (mode 가 publish 일 때만) */
+  scheduleAt?: Date;
+  /** 썸네일·사양표 판별 (안 주면 API 비전) */
+  judge?: AssetJudge;
+}): Promise<PostJobResult> {
+  const { settings, keyword, result, apiKey } = a;
+  const posts = a.src.posts;
+  const tpl = a.src.template;
+  const opts = { headless: a.headless, accountId: a.accountId };
+  const mode: PublishMode = a.mode ?? (settings.autoPublish ? "publish" : "local");
+
+  try {
     // 3-1) 유사문서 게이트 — 참고글을 그대로 옮겨 쓴 글은 발행하지 않는다.
     //      같은 회사 블로그끼리 비슷한 글이 올라가면 네이버가 하나를 유사문서로 처리해
     //      나중에 올린 쪽(보통 새 블로그)이 검색에서 빠진다. 초안으로만 남기고 사람이 손보게 한다.
@@ -124,7 +175,7 @@ export async function runPostJob(
     }
 
     // 4) 이미지·썸네일·서명 준비 (키워드에 맞는 원본 글의 이미지만)
-    const pa = await buildPostAssets(posts, keyword, settings, apiKey);
+    const pa = await buildPostAssets(posts, keyword, settings, apiKey, a.judge);
 
     // 4-1) 학습 블로그의 소제목/인용구 스타일을 판별해 본문을 구조화
     let styleProfile = analyzeHeadingStyle(posts);
@@ -201,7 +252,7 @@ export async function runPostJob(
     );
 
     // 5) 발행 여부
-    if (!settings.autoPublish) {
+    if (mode === "local") {
       // 초안만 만드는 모드 — 키워드를 기록해 두지 않으면 돌릴 때마다 같은 키워드로 또 만든다
       reserveDraftKeyword(draft.id);
       log.info(`자동발행 꺼짐 — 로컬 초안 저장: "${result.title}"`);
@@ -235,15 +286,25 @@ export async function runPostJob(
         tags: keywordTags(keyword), // 이 글 키워드 기반 태그 (다른 주제 안 섞음)
         category: settings.postCategory,
         visibility: settings.postVisibility,
+        dryRun: mode === "naverDraft", // 네이버 임시저장까지만 — 사람이 보고 직접 발행한다
+        scheduleAt: mode === "publish" ? a.scheduleAt : undefined,
       });
-      if (pub.ok && pub.mode === "published") {
+      if (pub.ok && pub.mode === "draft") {
+        reserveDraftKeyword(draft.id); // 곧 올라갈 글 — 다음 회차에 같은 키워드를 또 쓰지 않는다
+        markSessionValid(opts.accountId);
+        log.info(`네이버 임시저장 완료: "${result.title}"`);
+        return { ok: true, draft, published: false, naverDraft: true };
+      }
+      if (pub.ok && (pub.mode === "published" || pub.mode === "scheduled")) {
+        const scheduled = pub.mode === "scheduled" ? a.scheduleAt : undefined;
         markPublished(draft.id, pub.url);
         logPublished({
           title: result.title,
           url: pub.url,
           blogId: settings.blogId, // 어느 블로그에 올린 글인지 — 키워드 고르기 화면에서 블로그별로 보여 준다
           mainKeyword: keyword,
-          publishedAt: new Date().toISOString(),
+          // 예약 글은 올라갈 시각으로 남긴다 — 키워드 재사용 간격을 그날부터 센다
+          publishedAt: (scheduled ?? new Date()).toISOString(),
           imageCount:
             pa.bodyImages.length +
             (pa.thumbnail ? 1 : 0) +
@@ -257,6 +318,10 @@ export async function runPostJob(
             .filter((u): u is string => Boolean(u)),
         );
         markSessionValid(opts.accountId); // 발행 성공 = 세션 정상
+        if (scheduled) {
+          log.info(`🕒 예약 발행 등록: "${result.title}" → ${scheduled.toISOString()}`);
+          return { ok: true, draft, published: false, scheduledAt: scheduled.toISOString() };
+        }
         log.info(`✅ 발행 완료: "${result.title}" → ${pub.url}`);
         return { ok: true, draft, published: true, url: pub.url };
       }
@@ -268,7 +333,7 @@ export async function runPostJob(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log.error("포스트 잡 실패", err);
+    log.error("글 올리기 실패", err);
     return { ok: false, error: msg };
   }
 }
