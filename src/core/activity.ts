@@ -87,6 +87,33 @@ export function actedRecently(
     );
 }
 
+/** 이 계정이 마지막으로 공감·댓글·서로이웃 신청을 한 시각 (ms, 없으면 0) — 활동 사이 간격을 지키는 데 쓴다 */
+export function lastActivityAt(accountId?: string): number {
+  return activityStore
+    .read()
+    .activities.filter((a) => a.ok && mine(a, accountId))
+    .reduce((latest, a) => Math.max(latest, new Date(a.at).getTime()), 0);
+}
+
+/** 이 글에 이미 해당 액션을 했는가 */
+export function actedOnPost(
+  blogId: string,
+  logNo: string,
+  action: NeighborAction,
+  accountId?: string,
+): boolean {
+  return activityStore
+    .read()
+    .activities.some(
+      (a) =>
+        a.ok &&
+        a.action === action &&
+        a.targetBlogId === blogId &&
+        a.targetLogNo === logNo &&
+        mine(a, accountId),
+    );
+}
+
 // ---------- 발행 글 기록 ----------
 
 interface PublishedDb {

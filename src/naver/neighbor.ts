@@ -249,10 +249,12 @@ export async function engageOne(
   blogId: string,
   logNo: string,
   comment: string | null,
+  /** false면 공감은 누르지 않는다 (댓글만) */
+  allowLike = true,
 ): Promise<{ liked: boolean; commented: boolean }> {
   const page = await context.newPage();
   try {
-    return await engagePost(page, { blogId, logNo }, comment);
+    return await engagePost(page, { blogId, logNo }, comment, allowLike);
   } finally {
     await page.close().catch(() => {});
   }
@@ -394,8 +396,41 @@ export async function runBuddyRequestRound(
   return { requests };
 }
 
+/** 주제로 블로그를 찾는다 (모바일 블로그 검색 1쪽) — 서로이웃 후보. 아무것도 보내지 않는다. */
+export async function searchBlogsByTopic(
+  context: BrowserContext,
+  topic: string,
+): Promise<{ blogId: string; posts: { title: string; url: string }[] }[]> {
+  const page = await context.newPage();
+  try {
+    const searchUrl = `https://m.search.naver.com/search.naver?where=m_blog&query=${encodeURIComponent(topic)}`;
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+    await humanDelay(1.5, 3);
+    const links = await page.$$eval("a[href*='blog.naver.com']", (anchors) =>
+      anchors.map((a) => ({
+        href: (a as { href: string }).href,
+        text: ((a as { innerText?: string }).innerText ?? "").replace(/\s+/g, " ").trim(),
+      })),
+    );
+    const byBlog = new Map<string, { title: string; url: string }[]>();
+    for (const l of links) {
+      const m = l.href.match(/blog\.naver\.com\/([A-Za-z0-9_-]+)(?:\/(\d+))?/);
+      if (!m || ["PostView", "PostList"].includes(m[1]!)) continue;
+      const posts = byBlog.get(m[1]!) ?? [];
+      // 글 제목으로 보이는 링크만 (블로그 이름·날짜 링크 제외)
+      if (m[2] && l.text.length >= 8 && !posts.some((p) => p.url === l.href) && posts.length < 3) {
+        posts.push({ title: l.text.slice(0, 80), url: l.href });
+      }
+      byBlog.set(m[1]!, posts);
+    }
+    return [...byBlog].map(([blogId, posts]) => ({ blogId, posts }));
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 /** 개별 서로이웃 신청 — ⚠️ 튜닝 필요 */
-async function sendBuddyRequest(
+export async function sendBuddyRequest(
   context: BrowserContext,
   blogId: string,
   message: string,
