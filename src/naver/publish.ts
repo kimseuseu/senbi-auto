@@ -1175,6 +1175,18 @@ export async function publishPost(
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await humanDelay(2.5, 4);
     if (input.scheduleAt) {
+      // 네이버가 예약을 받아 주지 않으면(시각이 지났거나 너무 임박) 발행 패널이 그대로 남는다.
+      // 그 상태를 '예약됨'으로 기록하면 올라가지도 않은 글의 키워드·사진이 쓴 것으로 잡힌다.
+      const stillOpen = await frame
+        .locator(SEL.confirmPublish)
+        .first()
+        .isVisible({ timeout: 1500 })
+        .catch(() => false);
+      if (stillOpen) {
+        const msg = "예약 발행이 등록되지 않았습니다(발행 화면이 그대로 남아 있음). 예약 시각을 더 뒤로 잡아 다시 시도해 주세요.";
+        log.error(msg);
+        return { ok: false, mode: "failed", error: msg };
+      }
       log.info(`예약 발행 등록: ${input.scheduleAt.toISOString()}`);
       return { ok: true, mode: "scheduled" };
     }

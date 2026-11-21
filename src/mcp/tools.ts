@@ -7,6 +7,7 @@ import { writingContext } from "../generate";
 import { buildWritingGuide, finalizeDraft, LIMITS } from "../generate/pipeline";
 import { assertKeywordAllowed } from "../generate/keywordPool";
 import { downloadImage } from "../media/images";
+import { reservedDraftKeywords, markPublished as markDraftPublished, getDraft } from "../core/drafts";
 import { hasSavedSession } from "../naver/session";
 import { startLogin, loginStatus, isLoginInProgress, recentOtherLogin } from "../naver/login";
 import { assetJudgeCandidates, type AssetJudge } from "../run/assets";
@@ -22,6 +23,7 @@ import type { GenerateResult } from "../core/types";
 import { SOCIAL_TOOLS, SOCIAL_HANDLERS } from "./socialTools";
 import {
   ACCOUNT_PROP,
+  exclusive,
   lock,
   text,
   json,
@@ -124,13 +126,18 @@ const CORE_TOOLS = [
         scheduledAt: {
           type: "string",
           description:
-            '예약 발행 시각. 이 PC의 현지 시각으로 "2026-11-21T09:30" 꼴, 분은 10분 단위, 지금부터 10분 뒤 ~ 한 달 안. mode 가 publish 일 때만 쓴다. 주면 지금 올리지 않고 그 시각에 네이버가 올린다.',
+            '예약 발행 시각. 이 PC의 현지 시각으로 "2026-11-21T09:30" 꼴, 분은 10분 단위, 지금부터 30분 뒤 ~ 한 달 안. mode 가 publish 일 때만 쓴다. 주면 지금 올리지 않고 그 시각에 네이버가 올린다.',
         },
         excludeImageUrls: {
           type: "array",
           items: { type: "string" },
           description:
             "senbi_brief 가 보여 준 본문 사진 후보 중 본문에 넣으면 안 되는 사진의 URL — 배너, 상호·전화번호 카드, 로고, 글자만 있는 안내 이미지, 이 제품과 상관없는 사진.",
+        },
+        draftId: {
+          type: "string",
+          description:
+            "senbi_drafts 의 초안을 다시 올리는 것이면 그 초안 id. 발행에 성공하면 그 초안을 '올린 글'로 정리한다.",
         },
         showBrowser: { type: "boolean", description: "true면 브라우저 창을 띄워 입력 과정을 보여 준다." },
       },
@@ -177,7 +184,18 @@ async function plan(
   }
   const sel = await selectKeywords(settings, src);
   if (keyword !== undefined) {
-    const gate = assertKeywordAllowed(keyword, sel.pool, sel.used, sel.publishedTitles);
+    // 임시저장·초안으로 남긴 글의 키워드는 '쓴 것'으로 잡혀 있다(자동 선정이 또 고르지 않게).
+    // 그런데 그 글을 확인하고 발행하려는 것까지 막으면 naverDraft → publish 흐름이 끊긴다.
+    // 실제로 발행한 기록이 재사용 간격 안에 없다면, 같은 키워드의 초안 예약은 걸림돌로 치지 않는다.
+    const reuseDays = Math.max(0, settings.keywordReuseDays ?? 10);
+    const cutoff = reuseDays > 0 ? Date.now() - reuseDays * 86400_000 : 0;
+    const publishedRecently = recentPublishedFor(settings.blogId, 500).some(
+      (p) => p.mainKeyword === keyword && new Date(p.publishedAt).getTime() >= cutoff,
+    );
+    const onlyDrafted =
+      !publishedRecently && reservedDraftKeywords(settings.blogId).some((d) => d.keyword === keyword);
+    const used = onlyDrafted ? sel.used.filter((k) => k !== keyword) : sel.used;
+    const gate = assertKeywordAllowed(keyword, sel.pool, used, sel.publishedTitles);
     if (!gate.ok) throw new Error(`이 키워드는 쓸 수 없습니다 — ${gate.error}`);
   }
   return { src, sel };
@@ -243,9 +261,14 @@ function checkPost(settings: Settings, src: LearnSource, a: Args): Checked {
   }
 
   const lines = result.rawContent.split("\n").map((l) => l.trim());
-  const missing = (result.headings ?? []).filter((h) => !lines.includes(h));
+  // 발행할 때 본문은 빈 줄로 나눈 '문단' 단위로 들어간다. 소제목 아래에 빈 줄 없이 본문을 이어 쓰면
+  // 소제목이 문단의 첫 줄이 되어 버려 서식(소제목·인용구)이 입혀지지 않는다.
+  const paragraphs = result.rawContent.split(/\n\s*\n/).map((p) => p.trim());
+  const missing = (result.headings ?? []).filter((h) => !paragraphs.includes(h));
   if (missing.length > 0) {
-    blockers.push(`headings 에 있지만 본문에 그 줄이 없습니다(글자 그대로 일치해야 함): ${missing.join(" / ")}`);
+    blockers.push(
+      `headings 의 소제목이 본문에 '혼자 있는 줄'로 없습니다(글자 그대로 일치하고, 위아래를 빈 줄로 띄워야 함): ${missing.join(" / ")}`,
+    );
   }
   if ((result.headings ?? []).length < 3) {
     warnings.push("소제목이 3개 미만입니다. 글을 3~6개 섹션으로 나누고 섹션마다 소제목 한 줄을 두세요.");
@@ -450,7 +473,7 @@ async function brief(a: Args): Promise<ToolResult> {
   if (first) {
     out.push(
       text(
-        `\n---\n# 사진 판별 (출처 글: "${cand.sourceTitle}")\n\n[첫 사진] 아래 사진이 썸네일(큰 제목 글자·로고가 얹힌 표지 카드)이면 senbi_publish 에 firstImageIsThumbnail: true, 제품·현장을 그대로 찍은 사진이면 false.`,
+        `\n---\n# 사진 판별 (출처 글: "${cand.sourceTitle}")\n\n[첫 사진] 아래 사진이 썸네일(큰 제목 글자·로고가 얹힌 표지 카드)이면 senbi_publish 에 firstImageIsThumbnail: true, 제품·현장을 그대로 찍은 사진이면 false(그러면 본문 첫 사진으로 쓰인다). 배너·로고처럼 아예 쓰면 안 되는 사진이면 excludeImageUrls 에 이 URL 을 넣는다: ${cand.first}`,
       ),
       first,
     );
@@ -510,7 +533,11 @@ async function publish(a: Args): Promise<ToolResult> {
     );
   }
   let scheduleAt: Date | undefined;
-  if (str(a.scheduledAt)) {
+  if (a.scheduledAt !== undefined && a.scheduledAt !== null && a.scheduledAt !== "") {
+    // 값이 있는데 못 읽으면 반드시 멈춘다 — 조용히 무시하면 예약하려던 글이 지금 올라간다
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:00)?$/.test(str(a.scheduledAt))) {
+      return error('scheduledAt 을 읽지 못했습니다. 이 PC의 현지 시각으로 "2026-11-21T09:30" 꼴로 주세요.');
+    }
     if (mode !== "publish") return error("scheduledAt 은 mode 가 publish 일 때만 쓸 수 있습니다.");
     scheduleAt = new Date(str(a.scheduledAt));
     const ms = scheduleAt.getTime();
@@ -518,7 +545,8 @@ async function publish(a: Args): Promise<ToolResult> {
     if (scheduleAt.getMinutes() % 10 !== 0 || scheduleAt.getSeconds() !== 0) {
       return error("예약 시각의 분은 10분 단위여야 합니다(00·10·20·30·40·50).");
     }
-    if (ms < Date.now() + 10 * 60_000) return error("예약 시각은 지금부터 10분 뒤 이후여야 합니다.");
+    // 글을 에디터에 입력하는 데만 몇 분이 걸린다 — 여유가 없으면 확정할 때 이미 시각이 지나 있다
+    if (ms < Date.now() + 30 * 60_000) return error("예약 시각은 지금부터 30분 뒤 이후여야 합니다.");
     if (ms > Date.now() + 31 * 86400_000) return error("예약 시각은 한 달 안이어야 합니다.");
   }
   if (lock.busy) return error("다른 글을 올리는 중입니다. 끝난 뒤 다시 시도해 주세요.");
@@ -543,14 +571,18 @@ async function publish(a: Args): Promise<ToolResult> {
     const apiKey = resolveApiKey(settings);
     const specUrl = str(a.specImageUrl);
     const judge: AssetJudge = {};
+    // 판별은 senbi_brief 가 보여 준 바로 그 사진에만 적용한다 (다른 사진이 첫 자리에 오면 썸네일로 치지 않는다)
+    const shown = await assetJudgeCandidates(src.posts, keyword);
     if (typeof a.firstImageIsThumbnail === "boolean" || !apiKey) {
-      judge.isThumbnail = () => a.firstImageIsThumbnail === true;
+      judge.isThumbnail = (_buf, url) => a.firstImageIsThumbnail === true && url === shown.first;
     }
     if (specUrl || !apiKey) judge.isSpecTable = (_buf, url) => url === specUrl;
     const excluded = new Set(
       Array.isArray(a.excludeImageUrls) ? a.excludeImageUrls.map(str).filter(Boolean) : [],
     );
-    if (excluded.size > 0) judge.exclude = (url) => excluded.has(url);
+    // 보여 준 적 없는 사진은 쓰지 않는다 — 클로드가 보지 않은 사진이 판별 없이 들어가는 일을 막는다
+    const seen = new Set([...(shown.first ? [shown.first] : []), ...shown.specCandidates, ...shown.body]);
+    judge.exclude = (url) => excluded.has(url) || (seen.size > 0 && !seen.has(url));
 
     const r = await finishPost({
       settings,
@@ -573,6 +605,11 @@ async function publish(a: Args): Promise<ToolResult> {
       draftId: r.draft?.id,
     };
     if (!r.ok) return error(`올리지 못했습니다 — ${r.error ?? "알 수 없는 오류"}`);
+    // 예전 초안을 다시 올린 것이면 그 초안은 더 이상 '올릴 글'이 아니다
+    const oldDraft = str(a.draftId);
+    if ((r.published || r.scheduledAt) && oldDraft && oldDraft !== r.draft?.id && getDraft(oldDraft)) {
+      markDraftPublished(oldDraft, r.url);
+    }
     if (r.published) return json({ status: "published", url: r.url, visibility: settings.postVisibility, ...base });
     if (r.scheduledAt) {
       return json({
@@ -616,7 +653,6 @@ async function login(a: Args): Promise<ToolResult> {
   if (!acc) {
     return error("등록된 계정이 없습니다. 계정을 먼저 등록해야 로그인할 수 있습니다.");
   }
-  if (lock.busy) return error("이 서버가 글을 올리는 중입니다. 끝난 뒤 다시 시도해 주세요.");
   if (isLoginInProgress(acc.id)) return error("이 계정의 로그인 창이 이미 열려 있습니다.");
 
   // 같은 PC에서 여러 아이디를 잇달아 로그인하면 한꺼번에 보호조치에 걸릴 수 있다 (2026-09-30 실측)
@@ -631,10 +667,15 @@ async function login(a: Args): Promise<ToolResult> {
     );
   }
 
-  await startLogin(acc.id, acc.blogId); // 창이 닫힐 때까지 기다린다 (성공·시간 초과·보호조치)
-  const st = loginStatus(acc.id);
-  const view = { account: acc.name, blogId: acc.blogId, status: st.status, message: st.message };
-  return st.status === "success" ? json(view) : { isError: true, content: [text(JSON.stringify(view, null, 2))] };
+  // 로그인 창이 떠 있는 동안 발행·이웃 관리가 같은 브라우저 프로필을 열면 둘 다 깨진다
+  return exclusive(async () => {
+    await startLogin(acc.id, acc.blogId); // 창이 닫힐 때까지 기다린다 (성공·시간 초과·보호조치)
+    const st = loginStatus(acc.id);
+    const view = { account: acc.name, blogId: acc.blogId, status: st.status, message: st.message };
+    return st.status === "success"
+      ? json(view)
+      : { isError: true, content: [text(JSON.stringify(view, null, 2))] };
+  });
 }
 
 const HANDLERS: Record<string, (a: Args) => Promise<ToolResult>> = {
