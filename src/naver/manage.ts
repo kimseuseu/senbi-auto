@@ -14,8 +14,6 @@ const SEL = {
   // 임시저장: 저장 버튼 옆 숫자 버튼 → "임시저장 글" 팝업
   tempCount: '[class*="save_count_btn"]',
   tempItems: 'ul[aria-label="임시저장된 글"] li',
-  // 글 보기(PC): 더보기 → 삭제하기
-  overflowOpen: "a._open_overflowmenu",
   // 발행 패널: 현재 / 예약
   reserveLabel: 'label[for="radio_time2"]',
   reserveRadio: "#radio_time2",
@@ -99,6 +97,13 @@ export async function deletePost(
     await page.goto(viewUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForTimeout(2500);
     if (gone) return { ok: false, error: "이미 지워졌거나 없는 글입니다." };
+    // 없는 글이면 네이버가 글 목록(최신 글)으로 넘긴다. 그 화면의 글을 지우면 엉뚱한 글이 지워진다 —
+    // 주소와 이 글 번호의 메뉴가 둘 다 그대로여야만 진행한다.
+    const onThisPost = (): boolean => new RegExp(`logNo=${logNo}(?:&|$)`).test(page.url());
+    const menu = page.locator(`#overflowmenu-${logNo}`);
+    if (!onThisPost() || (await menu.count().catch(() => 0)) === 0) {
+      return { ok: false, error: "그 번호의 글을 열지 못했습니다(없는 글이거나 내 글이 아닙니다). 지우지 않았습니다." };
+    }
 
     const title = (
       await page
@@ -112,9 +117,9 @@ export async function deletePost(
       return { ok: false, title, error: `제목이 다릅니다 — 화면의 글은 "${title}" 입니다. 지우지 않았습니다.` };
     }
 
-    const del = page.locator(`#overflowmenu-${logNo} a._deletePost, a.btn_del._deletePost`).first();
+    const del = menu.locator("a._deletePost").first(); // 이 글 번호의 메뉴 안에서만 찾는다
     if (!(await del.isVisible({ timeout: 1500 }).catch(() => false))) {
-      await page.locator(SEL.overflowOpen).first().click({ timeout: 6000 });
+      await page.locator(`a._open_overflowmenu[class*="_param(${logNo})"]`).first().click({ timeout: 6000 });
       await page.waitForTimeout(600);
     }
     if (!(await del.isVisible({ timeout: 4000 }).catch(() => false))) {
@@ -123,16 +128,23 @@ export async function deletePost(
     await del.click({ timeout: 6000 }); // → 삭제 확인 창 (위 dialog 핸들러가 받아들인다)
     await humanDelay(2, 3.5);
 
-    // 실제로 지워졌는지 다시 열어 확인한다
+    // 실제로 지워졌는지 다시 열어 확인한다. '안 보인다'가 아니라 '지워졌다는 증거'가 있어야 성공이다 —
+    // 화면이 안 떴거나 로그인으로 튕긴 것을 삭제 성공으로 읽으면 안 된다.
     gone = false;
-    await page.goto(viewUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+    const loaded = await page
+      .goto(viewUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
     await page.waitForTimeout(2500);
-    const still = await page.locator(`#overflowmenu-${logNo}`).count().catch(() => 0);
-    if (gone || still === 0) {
+    const bounced = loaded && /blog\.naver\.com/.test(page.url()) && !onThisPost(); // 글 목록으로 넘어감
+    if (gone || bounced) {
       log.info(`글 삭제 완료: ${blogId}/${logNo} "${title}"`);
       return { ok: true, title };
     }
-    return { ok: false, title, error: "삭제를 눌렀지만 글이 그대로 있습니다." };
+    if ((await menu.count().catch(() => 0)) > 0) {
+      return { ok: false, title, error: "삭제를 눌렀지만 글이 그대로 있습니다." };
+    }
+    return { ok: false, title, error: "삭제를 눌렀지만 지워졌는지 확인하지 못했습니다. 블로그에서 직접 확인해 주세요." };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {

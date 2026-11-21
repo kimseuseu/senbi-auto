@@ -5,6 +5,7 @@ import {
   actedOnPost,
   lastActivityAt,
   recentPublishedFor,
+  removePublishedPost,
 } from "../core/activity";
 import { listDrafts, getDraft } from "../core/drafts";
 import { fetchPostContent } from "../crawl/post";
@@ -196,13 +197,19 @@ async function withSession(
   });
 }
 
+/** 계정별 마지막 시도 시각 (성공 여부와 무관 — 이 서버가 떠 있는 동안만 기억) */
+const lastAttempt = new Map<string, number>();
+
 /** 직전 활동과의 간격을 채울 때까지 기다린다 */
 async function waitForGap(accountId: string | undefined, minSec: number): Promise<number> {
   const gapMs = Math.max(MIN_GAP_SEC, minSec) * 1000;
-  const waitMs = lastActivityAt(accountId) + gapMs - Date.now();
-  if (waitMs <= 0) return 0;
-  await new Promise((r) => setTimeout(r, waitMs));
-  return Math.round(waitMs / 1000);
+  // 성공한 활동뿐 아니라 '시도'도 센다 — 등록은 됐는데 확인만 실패한 댓글·신청을 간격 없이 되풀이하면 안 된다
+  const key = accountId ?? "";
+  const last = Math.max(lastActivityAt(accountId), lastAttempt.get(key) ?? 0);
+  const waitMs = last + gapMs - Date.now();
+  if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+  lastAttempt.set(key, Date.now());
+  return waitMs > 0 ? Math.round(waitMs / 1000) : 0;
 }
 
 function cleanId(v: unknown): string {
@@ -464,11 +471,16 @@ async function removePost(a: Args): Promise<ToolResult> {
   return withSession(acc, async (context) => {
     const r = await deletePost(context, settings.blogId, logNo, confirmTitle);
     if (!r.ok) return error(`지우지 않았습니다 — ${r.error ?? "알 수 없는 이유"}`);
+    // 지운 글은 발행 기록에서도 뺀다 — 글 목록에 남지 않고, 그 키워드를 다시 쓸 수 있다
+    const cleared = removePublishedPost(settings.blogId, logNo);
     return json({
       deleted: true,
       title: r.title,
       url: `https://blog.naver.com/${settings.blogId}/${logNo}`,
-      note: "네이버에서 지웠습니다. 이 PC의 발행 기록은 그대로라, 이 글의 키워드는 재사용 간격이 지날 때까지 '쓴 것'으로 남습니다.",
+      note:
+        cleared > 0
+          ? "네이버에서 지웠고, 이 PC의 발행 기록에서도 뺐습니다. 이 글의 키워드는 다시 쓸 수 있습니다."
+          : "네이버에서 지웠습니다. 이 PC의 발행 기록에는 원래 없던 글입니다.",
     });
   });
 }

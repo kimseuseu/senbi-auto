@@ -81,6 +81,16 @@ rl.on("line", (line) => {
     send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "JSON 해석 실패" } });
     return;
   }
-  void handle(msg);
+  pending++;
+  void handle(msg).finally(() => {
+    pending--;
+    if (closing && pending === 0) process.exit(0);
+  });
 });
-rl.on("close", () => process.exit(0));
+// 클라이언트가 연결을 끊어도 진행 중인 발행은 끝까지 간다 — 중간에 죽으면 글이 반쯤 입력된 채 남는다
+let pending = 0;
+let closing = false;
+rl.on("close", () => {
+  closing = true;
+  if (pending === 0) process.exit(0);
+});

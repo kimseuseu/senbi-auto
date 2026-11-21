@@ -165,6 +165,24 @@ export function keywordUses(blogId?: string): { keyword: string; at: number }[] 
   return [...published, ...reservedDraftKeywords(blogId)];
 }
 
+/**
+ * 발행 기록에서 글 하나를 뺀다 (네이버에서 지운 글).
+ * 지운 글을 기록에 남겨 두면 글 목록에 계속 보이고, 그 키워드도 '쓴 것'으로 남아 다시 못 쓴다.
+ * @returns 뺀 기록 수
+ */
+export function removePublishedPost(blogId: string, logNo: string): number {
+  let removed = 0;
+  // 기록된 주소는 발행 직후 화면 주소라 뒤에 ?… 가 붙어 있을 수 있다 — 글 번호로 맞춘다
+  const hit = new RegExp(`/${blogId}/${logNo}(?:[?#/]|$)`);
+  publishedStore.update((db) => {
+    const before = db.posts.length;
+    db.posts = db.posts.filter((p) => !(p.url && hit.test(p.url)));
+    removed = before - db.posts.length;
+    return db;
+  });
+  return removed;
+}
+
 export function recentPublished(limit = 20): PublishedPost[] {
   return publishedStore.read().posts.slice(-limit).reverse();
 }

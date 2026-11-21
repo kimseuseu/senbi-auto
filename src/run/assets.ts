@@ -210,7 +210,10 @@ export async function assetJudgeCandidates(
   }
   const extra: string[] = [];
   for (const p of sameTopicPosts(posts, ranked, keyword)) extra.push(...(await clean(p.images.slice(1))));
-  const body = [...new Set([...pool.slice(1), ...extra])].slice(0, 36);
+  // buildPostAssets 가 쓰는 순서대로 보여 준다: 안 쓴 사진 먼저, 그다음 가장 오래전에 쓴 사진.
+  // (원래 순서로 자르면, 같은 제품을 여러 번 올린 뒤에는 실제로 쓰일 사진이 목록 밖으로 밀린다)
+  const all = [...new Set([...pool.slice(1), ...extra])];
+  const body = [...new Set([...filterUnusedImages(all), ...usedImagesOldestFirst(all)])].slice(0, 36);
   return { sourceTitle: main.title, first: pool[0] ?? null, specCandidates, body };
 }
 
